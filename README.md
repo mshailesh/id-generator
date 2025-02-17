@@ -301,11 +301,17 @@ Feel free to ask if you need any further assistance or have any questions!
 
 ----
 
-While the rules engine itself doesn't handle lists directly by default, we can indeed craft rules that ensure each element in a list is evaluated individually. This process involves iterating over the elements and ensuring they meet specified conditions.
+It looks like there might be an issue with how the `eligibleInstruments` fact is being referenced. Let's make sure that we're correctly defining and referencing this fact so that the rule engine can process it properly.
 
-Given this, let's structure our rules in a way that will handle each instrument individually. We'll then update the dynamic facts to support this structure. Here's the complete code to achieve this:
+### Step-by-Step Solution
 
-### Updated `rules.json`
+1. **Ensure the `eligibleInstruments` Fact is Defined**: We need to make sure that the `eligibleInstruments` fact is being correctly defined and fetched.
+
+2. **Update the Lambda Function**: Make sure that the instruments are evaluated individually against the rules.
+
+Here’s the updated complete implementation to address the issue:
+
+### Step 1: Define the Rules
 
 **`rules.json`**
 ```json
@@ -366,7 +372,7 @@ Given this, let's structure our rules in a way that will handle each instrument 
 ]
 ```
 
-### Updated Lambda Function
+### Step 2: Update the Lambda Function
 
 **`src/index.ts`**
 ```typescript
@@ -433,7 +439,7 @@ const getEligibleInstruments: DynamicFact = async (params, almanac) => {
 const dynamicFacts: { [key: string]: DynamicFact } = {
   "nextTradingDate": getNextTradingDate,
   "eligibleInstruments": getEligibleInstruments,
-  "instrument": (params, almanac) => almanac.factValue("eligibleInstruments")
+  "instrument": (params, almanac) => almanac.factValue("eligibleInstruments").then(instruments => instruments[params.index])
 };
 
 export const handler = async (): Promise<any> => {
@@ -453,7 +459,8 @@ export const handler = async (): Promise<any> => {
     let eligibleInstruments = [];
 
     // Evaluate rules for each instrument
-    for (let instrument of instruments) {
+    for (let index = 0; index < instruments.length; index++) {
+      const instrument = instruments[index];
       const results = await ruleEngineWrapper.evaluateRules(rules, {
         "nextTradingDate": async () => nextTradingDate,
         "instrument": async () => instrument
@@ -491,6 +498,8 @@ export const handler = async (): Promise<any> => {
 
 ### Summary
 
-In this implementation, each instrument is evaluated individually against the rules. The rules are defined in a way that they check if the next trading date is within the range of the instrument's first and last trading dates. This ensures that the filtering logic is correctly applied to each element in the list.
+In this updated implementation, we ensure that each instrument is treated as a separate fact and evaluated individually against the rules. The `instrument` fact is referenced correctly in the rules, and the rule engine processes each instrument based on the conditions specified.
+
+This should resolve the issue of the undefined `eligibleInstruments` fact and ensure that the filtering logic is applied correctly.
 
 Feel free to ask if you need any further assistance or have any questions!
