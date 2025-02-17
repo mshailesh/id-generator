@@ -295,3 +295,127 @@ aws lambda update-function-code --function-name YourLambdaFunction --zip-file fi
 This solution includes a type definition for `DynamicFact`, ensuring type safety and better maintainability in TypeScript. The rules and dynamic facts are updated accordingly, making the code cleaner and more organized. The rules JSON now checks the `first_trading_date`, `last_trading_date`, and `trade_type` directly within the rules, making them self-contained and adaptable.
 
 Feel free to ask if you need any further assistance or have any questions!
+
+
+
+
+------------------------------
+
+import RuleEngineWrapper from './ruleEngineWrapper';
+import { DynamicFact } from './types';
+import dotenv from 'dotenv';
+import debug from 'debug';
+
+dotenv.config();
+
+const log = debug('rule-engine');
+
+// Enable debugging if DEBUG environment variable is set
+if (process.env.DEBUG) {
+  log.enabled = true;
+}
+
+// Initialize Rule Engine Wrapper
+const ruleEngineWrapper = new RuleEngineWrapper();
+
+// Define the hard-coded values
+const bucket = process.env.S3_BUCKET!;
+const key = process.env.S3_KEY!;
+
+// Define Dynamic Facts
+const getNextTradingDate: DynamicFact = async (params, almanac) => {
+  const query = "SELECT trade_date FROM calendar WHERE trade_date_indicator = 'Y' AND trade_date > NOW() ORDER BY trade_date LIMIT 1";
+  const data = await ruleEngineWrapper.fetchFactData(query);
+  log('Next Trading Date:', data[0].trade_date);
+  data[0].trade_date = new Date(data[0].trade_date); // Parse the date
+  return data[0];
+};
+
+const getEligibleInstruments: DynamicFact = async (params, almanac) => {
+  const query = `
+    SELECT 
+      i.instrument_code AS instrument_id,
+      i.commodity_code,
+      i.instrument_type,
+      i.first_trading_date,
+      i.last_trading_date,
+      ac.commodity_code as applicable_commodity_code,
+      ac.instrument_type as applicable_instrument_type,
+      ttm.trade_type,
+      ttm.commodity_code as trade_commodity_code,
+      ttm.instrument_type as trade_instrument_type
+    FROM instruments i
+    JOIN applicable_contracts ac ON i.commodity_code = ac.commodity_code AND i.instrument_type = ac.instrument_type
+    JOIN trade_type_mapping ttm ON i.commodity_code = ttm.commodity_code AND i.instrument_type = ttm.instrument_type
+  `;
+  const data = await ruleEngineWrapper.fetchFactData(query);
+  log('Fetched Instruments:', data);
+
+  // Parse the dates
+  data.forEach(instrument => {
+    instrument.first_trading_date = new Date(instrument.first_trading_date);
+    instrument.last_trading_date = new Date(instrument.last_trading_date);
+  });
+
+  log('Parsed Instruments:', data);
+  return data;
+};
+
+const dynamicFacts: { [key: string]: DynamicFact } = {
+  "nextTradingDate": getNextTradingDate,
+  "eligibleInstruments": getEligibleInstruments,
+  "instrument": (params, almanac) => almanac.factValue("eligibleInstruments")
+};
+
+export const handler = async (): Promise<any> => {
+  try {
+    // Fetch rules from S3 using hard-coded bucket and key
+    log('Fetching rules from S3...');
+    const rules = await ruleEngineWrapper.fetchRulesFromS3(bucket, key);
+    log('Fetched Rules:', rules);
+
+    // Fetch dynamic facts
+    const nextTradingDate = await dynamicFacts["nextTradingDate"](null, null);
+    const instruments = await dynamicFacts["eligibleInstruments"](null, null);
+
+    log('Next Trading Date:', nextTradingDate);
+    log('Instruments:', instruments);
+
+    let eligibleInstruments = [];
+
+    // Evaluate rules for each instrument
+    for (let instrument of instruments) {
+      const results = await ruleEngineWrapper.evaluateRules(rules, {
+        "nextTradingDate": async () => nextTradingDate,
+        "instrument": async () => instrument
+      });
+
+      // Check if instrument is eligible
+      if (results.find(result => result.type === "eligibleInstrument")) {
+        eligibleInstruments.push(instrument.instrument_id);
+      }
+    }
+
+    log('Eligible Instruments:', eligibleInstruments);
+
+    // Insert eligible instruments into the table
+    for (const instrument of eligibleInstruments) {
+      const insertQuery = 'INSERT INTO eligible_instruments (instrument_id) VALUES ($1)';
+      await ruleEngineWrapper.insertProcessedData(insertQuery, [instrument]);
+    }
+
+    log('Eligible Instruments inserted into the table successfully.');
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ eligibleInstruments })
+    };
+  } catch (error) {
+    log('Error processing rules:', error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: 'Internal Server Error' })
+    };
+  }
+};
+
