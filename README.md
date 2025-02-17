@@ -1,4 +1,19 @@
-// FactService.ts
+Certainly! Here's the full code for the rule engine wrapper library, the dynamic facts, the rules JSON, and the Lambda handler, all following the SOLID principles and clean code practices.
+
+### Step 1: Creating the Rule Engine Wrapper Library
+
+1. **Install necessary dependencies**:
+   ```bash
+   npm install json-rules-engine aws-sdk pg
+   ```
+
+2. **Creating Service Classes**
+   - **FactService**: Fetches fact data from RDS.
+   - **RuleService**: Manages rules and their evaluation.
+   - **S3Service**: Fetches rules from S3.
+
+```typescript
+// services/FactService.ts
 import { Client } from 'pg';
 
 class FactService {
@@ -23,8 +38,10 @@ class FactService {
 }
 
 export default FactService;
+```
 
-// RuleService.ts
+```typescript
+// services/RuleService.ts
 import { Engine, Rule } from 'json-rules-engine';
 
 class RuleService {
@@ -40,7 +57,7 @@ class RuleService {
     }
   }
 
-  async evaluateRules(dynamicFacts: any): Promise<any> {
+  async evaluateRules(dynamicFacts: { [key: string]: (params: any, almanac: any) => Promise<any> }): Promise<any> {
     for (const [factId, factFn] of Object.entries(dynamicFacts)) {
       this.engine.addFact(factId, factFn);
     }
@@ -51,8 +68,10 @@ class RuleService {
 }
 
 export default RuleService;
+```
 
-// S3Service.ts
+```typescript
+// services/S3Service.ts
 import { S3 } from 'aws-sdk';
 
 class S3Service {
@@ -70,12 +89,15 @@ class S3Service {
 }
 
 export default S3Service;
+```
 
+3. **Creating the Wrapper Library (`src/ruleEngineWrapper.ts`)**
 
-
-import FactService from './FactService';
-import RuleService from './RuleService';
-import S3Service from './S3Service';
+```typescript
+import FactService from './services/FactService';
+import RuleService from './services/RuleService';
+import S3Service from './services/S3Service';
+import { DynamicFact } from './types';
 
 class RuleEngineWrapper {
   private factService: FactService;
@@ -92,7 +114,7 @@ class RuleEngineWrapper {
     return this.factService.fetchFactData(query);
   }
 
-  async evaluateRules(rules: any[], dynamicFacts: any): Promise<any> {
+  async evaluateRules(rules: any[], dynamicFacts: { [key: string]: DynamicFact }): Promise<any> {
     this.ruleService.addRules(rules);
     return this.ruleService.evaluateRules(dynamicFacts);
   }
@@ -103,13 +125,16 @@ class RuleEngineWrapper {
 }
 
 export default RuleEngineWrapper;
+```
 
+### Step 2: Creating the Lambda Function
 
+1. **Create the Lambda Handler (`src/index.ts`)**
 
-
-
+```typescript
 import RuleEngineWrapper from 'rule-engine-wrapper';
 import { S3 } from 'aws-sdk';
+import { DynamicFact } from './types';
 
 const s3 = new S3();
 const ruleEngineWrapper = new RuleEngineWrapper();
@@ -128,53 +153,30 @@ export const handler = async (event: any): Promise<any> => {
     body: JSON.stringify(results),
   };
 };
+```
 
+### Step 3: Implementing Specific Rules and Dynamic Facts with Direct Date Checks
 
+1. **Dynamic Facts and Rules** (Specific to the Lambda function)
 
-import RuleEngineWrapper from 'rule-engine-wrapper';
-
-// Initialize Rule Engine Wrapper
-const ruleEngineWrapper = new RuleEngineWrapper();
-
-// Fact Function for Next Trading Date
-const getNextTradingDate = async (params, almanac) => {
-  const query = "SELECT trade_date FROM calendar WHERE trade_date_indicator = 'Y' AND trade_date > NOW() ORDER BY trade_date LIMIT 1";
-  const data = await ruleEngineWrapper.fetchFactData(query);
-  return data[0].trade_date;
-};
-
-// Fact Function for Eligible Instruments
-const getEligibleInstruments = async (params, almanac) => {
-  const nextTradingDate = await almanac.factValue("nextTradingDate");
-  const query = `SELECT * FROM instruments WHERE first_trading_date <= '${nextTradingDate}' AND last_trading_date >= '${nextTradingDate}'`;
-  const data = await ruleEngineWrapper.fetchFactData(query);
-  return data;
-};
-
-// Define Dynamic Facts
-const dynamicFacts = {
-  "nextTradingDate": getNextTradingDate,
-  "eligibleInstruments": getEligibleInstruments
-};
-
-// Rules with Priority
-const rules = [
+**Rules JSON**:
+```json
+[
   {
     "conditions": {
       "all": [
         {
           "fact": "nextTradingDate",
           "operator": "greaterThanInclusive",
-          "value": "$today"
+          "value": "$today",
+          "path": "$.trade_date"
         }
       ]
     },
     "event": {
       "type": "nextTradingDate",
       "params": {
-        "updateFacts": {
-          "nextTradingDate": "$currentDate"
-        }
+        "message": "Next trading date found"
       }
     },
     "priority": 10 // Higher priority to run first
@@ -184,24 +186,112 @@ const rules = [
       "all": [
         {
           "fact": "eligibleInstruments",
-          "operator": "equal",
-          "value": true
+          "operator": "greaterThanInclusive",
+          "value": "$nextTradingDate",
+          "path": "$.first_trading_date"
+        },
+        {
+          "fact": "eligibleInstruments",
+          "operator": "lessThanInclusive",
+          "value": "$nextTradingDate",
+          "path": "$.last_trading_date"
+        },
+        {
+          "fact": "applicableContracts",
+          "operator": "contains",
+          "value": {
+            "commodity_code": "$commodityCode",
+            "instrument_type": "$instrumentType"
+          }
+        },
+        {
+          "fact": "tradeTypeMapping",
+          "operator": "contains",
+          "value": {
+            "trade_type": ["block", "efp"],
+            "commodity_code": "$commodityCode",
+            "instrument_type": "$instrumentType"
+          }
         }
       ]
     },
     "event": {
       "type": "eligibleInstrument",
       "params": {
-        "updateFacts": {
-          "eligibleInstruments": "SELECT * FROM instruments WHERE first_trading_date <= $nextTradingDate AND last_trading_date >= $nextTradingDate"
-        }
+        "message": "Instrument is eligible"
       }
     },
     "priority": 5 // Lower priority to run after the first rule
   }
-];
+]
+```
 
+**Dynamic Facts Implementation**:
+```typescript
+import RuleEngineWrapper from 'rule-engine-wrapper';
+import { DynamicFact } from './types';
 
+// Initialize Rule Engine Wrapper
+const ruleEngineWrapper = new RuleEngineWrapper();
 
+// Fact Function for Next Trading Date
+const getNextTradingDate: DynamicFact = async (params, almanac) => {
+  const query = "SELECT trade_date FROM calendar WHERE trade_date_indicator = 'Y' AND trade_date > NOW() ORDER BY trade_date LIMIT 1";
+  const data = await ruleEngineWrapper.fetchFactData(query);
+  return data[0];
+};
 
+// Fact Function for Eligible Instruments
+const getEligibleInstruments: DynamicFact = async (params, almanac) => {
+  const query = `
+    SELECT 
+      i.instrument_code,
+      i.commodity_code,
+      i.instrument_type,
+      i.first_trading_date,
+      i.last_trading_date,
+      ac.commodity_code as applicable_commodity_code,
+      ac.instrument_type as applicable_instrument_type,
+      ttm.trade_type,
+      ttm.commodity_code as trade_commodity_code,
+      ttm.instrument_type as trade_instrument_type
+    FROM instruments i
+    JOIN applicable_contracts ac ON i.commodity_code = ac.commodity_code AND i.instrument_type = ac.instrument_type
+    JOIN trade_type_mapping ttm ON i.commodity_code = ttm.commodity_code AND i.instrument_type = ttm.instrument_type
+  `;
+  const data = await ruleEngineWrapper.fetchFactData(query);
+  return data;
+};
 
+// Define Dynamic Facts
+const dynamicFacts: { [key: string]: DynamicFact } = {
+  "nextTradingDate": getNextTradingDate,
+  "eligibleInstruments": getEligibleInstruments
+};
+```
+
+### Step 4: Defining the Types
+
+**Create a file named `types.ts` to define the types:**
+```typescript
+// types.ts
+
+// Type definition for DynamicFact
+export type DynamicFact = (params: any, almanac: any) => Promise<any>;
+```
+
+### Step 5: Deploy the Lambda Function
+
+1. **Bundle and Deploy**
+
+```bash
+npm run build
+zip -r lambda-package.zip .
+aws lambda update-function-code --function-name YourLambdaFunction --zip-file fileb://lambda-package.zip
+```
+
+### Summary
+
+This solution includes a type definition for `DynamicFact`, ensuring type safety and better maintainability in TypeScript. The rules and dynamic facts are updated accordingly, making the code cleaner and more organized. The rules JSON now checks the `first_trading_date`, `last_trading_date`, and `trade_type` directly within the rules, making them self-contained and adaptable.
+
+Feel free to ask if you need any further assistance or have any questions!
