@@ -299,8 +299,77 @@ Feel free to ask if you need any further assistance or have any questions!
 
 
 
-------------------------------
+----
 
+While the rules engine itself doesn't handle lists directly by default, we can indeed craft rules that ensure each element in a list is evaluated individually. This process involves iterating over the elements and ensuring they meet specified conditions.
+
+Given this, let's structure our rules in a way that will handle each instrument individually. We'll then update the dynamic facts to support this structure. Here's the complete code to achieve this:
+
+### Updated `rules.json`
+
+**`rules.json`**
+```json
+[
+  {
+    "conditions": {
+      "all": [
+        {
+          "fact": "nextTradingDate",
+          "operator": "greaterThanInclusive",
+          "value": "$today",
+          "path": "$.trade_date"
+        }
+      ]
+    },
+    "event": {
+      "type": "nextTradingDate",
+      "params": {
+        "message": "Next trading date found",
+        "nextTradingDate": "$.trade_date"
+      }
+    },
+    "priority": 10
+  },
+  {
+    "conditions": {
+      "all": [
+        {
+          "fact": "instrument",
+          "operator": "greaterThanInclusive",
+          "value": {
+            "fact": "nextTradingDate",
+            "path": "$.trade_date"
+          },
+          "path": "$.first_trading_date"
+        },
+        {
+          "fact": "instrument",
+          "operator": "lessThanInclusive",
+          "value": {
+            "fact": "nextTradingDate",
+            "path": "$.trade_date"
+          },
+          "path": "$.last_trading_date"
+        }
+      ]
+    },
+    "event": {
+      "type": "eligibleInstrument",
+      "params": {
+        "message": "Instrument is eligible",
+        "instrumentId": "$.instrument_id",
+        "nextTradingDate": "$nextTradingDate.trade_date"
+      }
+    },
+    "priority": 5
+  }
+]
+```
+
+### Updated Lambda Function
+
+**`src/index.ts`**
+```typescript
 import RuleEngineWrapper from './ruleEngineWrapper';
 import { DynamicFact } from './types';
 import dotenv from 'dotenv';
@@ -418,4 +487,10 @@ export const handler = async (): Promise<any> => {
     };
   }
 };
+```
 
+### Summary
+
+In this implementation, each instrument is evaluated individually against the rules. The rules are defined in a way that they check if the next trading date is within the range of the instrument's first and last trading dates. This ensures that the filtering logic is correctly applied to each element in the list.
+
+Feel free to ask if you need any further assistance or have any questions!
