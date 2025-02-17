@@ -300,18 +300,14 @@ Feel free to ask if you need any further assistance or have any questions!
 
 
 ----
+Thanks for the clarification. Let's simplify the approach to avoid defining an extra fact for `eligibleInstruments`. We will focus on defining rules that can be applied individually to each instrument and then filtering the instruments based on the evaluation results.
 
-It looks like there might be an issue with how the `eligibleInstruments` fact is being referenced. Let's make sure that we're correctly defining and referencing this fact so that the rule engine can process it properly.
+### Simplified Approach:
+1. Define rules to check if an instrument's trading dates are within the next trading date.
+2. Use the rules engine to evaluate each instrument.
+3. Filter the eligible instruments based on the rule evaluation.
 
-### Step-by-Step Solution
-
-1. **Ensure the `eligibleInstruments` Fact is Defined**: We need to make sure that the `eligibleInstruments` fact is being correctly defined and fetched.
-
-2. **Update the Lambda Function**: Make sure that the instruments are evaluated individually against the rules.
-
-Here’s the updated complete implementation to address the issue:
-
-### Step 1: Define the Rules
+### Updated `rules.json`
 
 **`rules.json`**
 ```json
@@ -340,22 +336,20 @@ Here’s the updated complete implementation to address the issue:
     "conditions": {
       "all": [
         {
-          "fact": "instrument",
-          "operator": "greaterThanInclusive",
-          "value": {
-            "fact": "nextTradingDate",
-            "path": "$.trade_date"
-          },
-          "path": "$.first_trading_date"
-        },
-        {
-          "fact": "instrument",
+          "fact": "firstTradingDate",
           "operator": "lessThanInclusive",
           "value": {
             "fact": "nextTradingDate",
             "path": "$.trade_date"
-          },
-          "path": "$.last_trading_date"
+          }
+        },
+        {
+          "fact": "lastTradingDate",
+          "operator": "greaterThanInclusive",
+          "value": {
+            "fact": "nextTradingDate",
+            "path": "$.trade_date"
+          }
         }
       ]
     },
@@ -363,7 +357,7 @@ Here’s the updated complete implementation to address the issue:
       "type": "eligibleInstrument",
       "params": {
         "message": "Instrument is eligible",
-        "instrumentId": "$.instrument_id",
+        "instrumentId": "$instrument.instrument_id",
         "nextTradingDate": "$nextTradingDate.trade_date"
       }
     },
@@ -372,7 +366,7 @@ Here’s the updated complete implementation to address the issue:
 ]
 ```
 
-### Step 2: Update the Lambda Function
+### Updated Lambda Function
 
 **`src/index.ts`**
 ```typescript
@@ -436,12 +430,6 @@ const getEligibleInstruments: DynamicFact = async (params, almanac) => {
   return data;
 };
 
-const dynamicFacts: { [key: string]: DynamicFact } = {
-  "nextTradingDate": getNextTradingDate,
-  "eligibleInstruments": getEligibleInstruments,
-  "instrument": (params, almanac) => almanac.factValue("eligibleInstruments").then(instruments => instruments[params.index])
-};
-
 export const handler = async (): Promise<any> => {
   try {
     // Fetch rules from S3 using hard-coded bucket and key
@@ -450,8 +438,8 @@ export const handler = async (): Promise<any> => {
     log('Fetched Rules:', rules);
 
     // Fetch dynamic facts
-    const nextTradingDate = await dynamicFacts["nextTradingDate"](null, null);
-    const instruments = await dynamicFacts["eligibleInstruments"](null, null);
+    const nextTradingDate = await getNextTradingDate(null, null);
+    const instruments = await getEligibleInstruments(null, null);
 
     log('Next Trading Date:', nextTradingDate);
     log('Instruments:', instruments);
@@ -459,10 +447,11 @@ export const handler = async (): Promise<any> => {
     let eligibleInstruments = [];
 
     // Evaluate rules for each instrument
-    for (let index = 0; index < instruments.length; index++) {
-      const instrument = instruments[index];
+    for (let instrument of instruments) {
       const results = await ruleEngineWrapper.evaluateRules(rules, {
         "nextTradingDate": async () => nextTradingDate,
+        "firstTradingDate": async () => ({ first_trading_date: instrument.first_trading_date }),
+        "lastTradingDate": async () => ({ last_trading_date: instrument.last_trading_date }),
         "instrument": async () => instrument
       });
 
@@ -498,8 +487,6 @@ export const handler = async (): Promise<any> => {
 
 ### Summary
 
-In this updated implementation, we ensure that each instrument is treated as a separate fact and evaluated individually against the rules. The `instrument` fact is referenced correctly in the rules, and the rule engine processes each instrument based on the conditions specified.
-
-This should resolve the issue of the undefined `eligibleInstruments` fact and ensure that the filtering logic is applied correctly.
+This updated implementation ensures each instrument is evaluated individually based on its trading dates compared to the next trading date. By simplifying the dynamic facts and using the rules engine appropriately, we avoid the issue of undefined facts and ensure proper filtering of eligible instruments.
 
 Feel free to ask if you need any further assistance or have any questions!
