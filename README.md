@@ -490,3 +490,18 @@ export const handler = async (): Promise<any> => {
 This updated implementation ensures each instrument is evaluated individually based on its trading dates compared to the next trading date. By simplifying the dynamic facts and using the rules engine appropriately, we avoid the issue of undefined facts and ensure proper filtering of eligible instruments.
 
 Feel free to ask if you need any further assistance or have any questions!
+
+
+
+// Function to fetch business days after a given date
+const fetchBusinessDays = async (startDate: number, days: number): Promise<number> => {
+  const query = `
+    SELECT trade_date 
+    FROM calendar 
+    WHERE trade_date_indicator = 'Y' 
+    AND EXTRACT(EPOCH FROM trade_date) > ${startDate}
+    ORDER BY trade_date 
+    LIMIT ${days}`;
+  const data = await fetchFactData(query);
+  const businessDate = new Date(data[data.length - 1].trade_date).getTime() / 1000; // Return as Unix timestamp of the last date
+  return businessDate;
