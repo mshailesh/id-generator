@@ -618,3 +618,42 @@ describe('S3Service', () => {
   });
 });
 
+
+
+
+
+// tests/__tests__/Database.test.ts
+import pgPromise from 'pg-promise';
+import Database from '../../src/utils/Database';
+
+jest.mock('pg-promise');
+
+const mockPgPromise = pgPromise as jest.MockedFunction<typeof pgPromise>;
+
+describe('Database', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should initialize the database connection', () => {
+    const mockInstance = {};
+    mockPgPromise.mockReturnValueOnce(() => mockInstance as any);
+
+    const dbInstance = Database.getInstance();
+    expect(dbInstance).toBe(mockInstance);
+    expect(mockPgPromise).toHaveBeenCalledTimes(1);
+  });
+
+  it('should return the same instance for subsequent calls', () => {
+    const mockInstance = {};
+    mockPgPromise.mockReturnValueOnce(() => mockInstance as any);
+
+    const dbInstance1 = Database.getInstance();
+    const dbInstance2 = Database.getInstance();
+    
+    expect(dbInstance1).toBe(dbInstance2);
+    expect(mockPgPromise).toHaveBeenCalledTimes(1);
+  });
+});
+
+
