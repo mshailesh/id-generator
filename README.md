@@ -519,12 +519,20 @@ describe('Database', () => {
 });
 
 // __tests__/FactService.test.ts
-import FactService from '../services/FactService';
-import db from '../services/db';
+// tests/__tests__/FactService.test.ts
+import FactService from '../../src/services/FactService';
+import Database from '../../src/utils/Database';
+import { IDatabase } from 'pg-promise';
 
-jest.mock('../services/db');
+// Mock Database.getInstance() to return a mock database instance
+jest.mock('../../src/utils/Database');
 
-const mockDb = db as jest.Mocked<typeof db>;
+const mockDbInstance = {
+  any: jest.fn(),
+  none: jest.fn(),
+} as unknown as IDatabase<any>;
+
+(Database.getInstance as jest.Mock).mockReturnValue(mockDbInstance);
 
 describe('FactService', () => {
   const factService = new FactService();
@@ -535,25 +543,27 @@ describe('FactService', () => {
 
   it('should fetch fact data', async () => {
     const mockData = [{ id: 1, name: 'Test' }];
-    mockDb.any.mockResolvedValue(mockData);
+    mockDbInstance.any.mockResolvedValue(mockData);
 
     const data = await factService.fetchFactData('SELECT * FROM test');
     expect(data).toEqual(mockData);
-    expect(mockDb.any).toHaveBeenCalledWith('SELECT * FROM test');
+    expect(mockDbInstance.any).toHaveBeenCalledWith('SELECT * FROM test');
   });
 
   it('should insert processed data', async () => {
-    mockDb.none.mockResolvedValue(undefined);
+    mockDbInstance.none.mockResolvedValue(undefined);
 
     await factService.insertProcessedData('INSERT INTO test VALUES ($1, $2)', ['value1', 'value2']);
-    expect(mockDb.none).toHaveBeenCalledWith('INSERT INTO test VALUES ($1, $2)', ['value1', 'value2']);
+    expect(mockDbInstance.none).toHaveBeenCalledWith('INSERT INTO test VALUES ($1, $2)', ['value1', 'value2']);
   });
 });
 
 // __tests__/RuleService.test.ts
-import { Engine, Rule } from 'json-rules-engine';
-import RuleService from '../services/RuleService';
+// tests/__tests__/RuleService.test.ts
+import { Engine, Rule, Almanac } from 'json-rules-engine';
+import RuleService from '../../src/services/RuleService';
 
+// Mock json-rules-engine
 jest.mock('json-rules-engine');
 
 const mockEngine = Engine as jest.MockedClass<typeof Engine>;
@@ -561,8 +571,11 @@ const mockRule = Rule as jest.MockedClass<typeof Rule>;
 
 describe('RuleService', () => {
   let ruleService: RuleService;
+  let mockEngineInstance: jest.Mocked<Engine>;
 
   beforeEach(() => {
+    mockEngineInstance = new mockEngine();
+    (mockEngine as jest.Mock).mockReturnValue(mockEngineInstance);
     ruleService = new RuleService();
     jest.clearAllMocks();
   });
@@ -570,7 +583,7 @@ describe('RuleService', () => {
   it('should add rules to the engine', () => {
     const rules = [{ conditions: {}, event: {} }];
     ruleService.addRules(rules);
-    expect(mockEngine.prototype.addRule).toHaveBeenCalledWith(new Rule(rules[0]));
+    expect(mockEngineInstance.addRule).toHaveBeenCalledWith(new mockRule(rules[0]));
   });
 
   it('should evaluate rules with dynamic facts', async () => {
@@ -579,14 +592,15 @@ describe('RuleService', () => {
     };
 
     const mockResults = { events: [{ type: 'testEvent', params: {} }] };
-    mockEngine.prototype.run.mockResolvedValue(mockResults);
+    mockEngineInstance.run.mockResolvedValue(mockResults);
 
     const results = await ruleService.evaluateRules(dynamicFacts);
     expect(results).toEqual(mockResults.events);
-    expect(mockEngine.prototype.addFact).toHaveBeenCalledWith('fact1', dynamicFacts.fact1);
-    expect(mockEngine.prototype.run).toHaveBeenCalled();
+    expect(mockEngineInstance.addFact).toHaveBeenCalledWith('fact1', dynamicFacts.fact1);
+    expect(mockEngineInstance.run).toHaveBeenCalled();
   });
 });
+
 
 // __tests__/S3Service.test.ts
 import { S3 } from 'aws-sdk';
