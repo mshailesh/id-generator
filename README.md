@@ -505,3 +505,116 @@ const fetchBusinessDays = async (startDate: number, days: number): Promise<numbe
   const data = await fetchFactData(query);
   const businessDate = new Date(data[data.length - 1].trade_date).getTime() / 1000; // Return as Unix timestamp of the last date
   return businessDate;
+
+  --------------------------------------------
+
+  // __tests__/db.test.ts
+import db from '../services/db';
+
+describe('Database', () => {
+  it('should initialize the database connection', () => {
+    expect(db).toBeDefined();
+    expect(db.connect).toBeDefined();
+  });
+});
+
+// __tests__/FactService.test.ts
+import FactService from '../services/FactService';
+import db from '../services/db';
+
+jest.mock('../services/db');
+
+const mockDb = db as jest.Mocked<typeof db>;
+
+describe('FactService', () => {
+  const factService = new FactService();
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should fetch fact data', async () => {
+    const mockData = [{ id: 1, name: 'Test' }];
+    mockDb.any.mockResolvedValue(mockData);
+
+    const data = await factService.fetchFactData('SELECT * FROM test');
+    expect(data).toEqual(mockData);
+    expect(mockDb.any).toHaveBeenCalledWith('SELECT * FROM test');
+  });
+
+  it('should insert processed data', async () => {
+    mockDb.none.mockResolvedValue(undefined);
+
+    await factService.insertProcessedData('INSERT INTO test VALUES ($1, $2)', ['value1', 'value2']);
+    expect(mockDb.none).toHaveBeenCalledWith('INSERT INTO test VALUES ($1, $2)', ['value1', 'value2']);
+  });
+});
+
+// __tests__/RuleService.test.ts
+import { Engine, Rule } from 'json-rules-engine';
+import RuleService from '../services/RuleService';
+
+jest.mock('json-rules-engine');
+
+const mockEngine = Engine as jest.MockedClass<typeof Engine>;
+const mockRule = Rule as jest.MockedClass<typeof Rule>;
+
+describe('RuleService', () => {
+  let ruleService: RuleService;
+
+  beforeEach(() => {
+    ruleService = new RuleService();
+    jest.clearAllMocks();
+  });
+
+  it('should add rules to the engine', () => {
+    const rules = [{ conditions: {}, event: {} }];
+    ruleService.addRules(rules);
+    expect(mockEngine.prototype.addRule).toHaveBeenCalledWith(new Rule(rules[0]));
+  });
+
+  it('should evaluate rules with dynamic facts', async () => {
+    const dynamicFacts = {
+      fact1: jest.fn(async () => ({ value: 'test' })),
+    };
+
+    const mockResults = { events: [{ type: 'testEvent', params: {} }] };
+    mockEngine.prototype.run.mockResolvedValue(mockResults);
+
+    const results = await ruleService.evaluateRules(dynamicFacts);
+    expect(results).toEqual(mockResults.events);
+    expect(mockEngine.prototype.addFact).toHaveBeenCalledWith('fact1', dynamicFacts.fact1);
+    expect(mockEngine.prototype.run).toHaveBeenCalled();
+  });
+});
+
+// __tests__/S3Service.test.ts
+import { S3 } from 'aws-sdk';
+import S3Service from '../services/S3Service';
+
+jest.mock('aws-sdk');
+
+const mockS3 = S3 as jest.MockedClass<typeof S3>;
+
+describe('S3Service', () => {
+  let s3Service: S3Service;
+
+  beforeEach(() => {
+    s3Service = new S3Service();
+    jest.clearAllMocks();
+  });
+
+  it('should fetch rules from S3', async () => {
+    const bucket = 'test-bucket';
+    const key = 'test-key';
+    const mockData = { Body: Buffer.from(JSON.stringify([{ conditions: {}, event: {} }])) };
+    mockS3.prototype.getObject.mockReturnValue({
+      promise: jest.fn().mockResolvedValue(mockData),
+    } as any);
+
+    const rules = await s3Service.fetchRulesFromS3(bucket, key);
+    expect(rules).toEqual([{ conditions: {}, event: {} }]);
+    expect(mockS3.prototype.getObject).toHaveBeenCalledWith({ Bucket: bucket, Key: key });
+  });
+});
+
