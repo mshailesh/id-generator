@@ -744,3 +744,34 @@ AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=test
 AWS_SECRET_ACCESS_KEY=test
 
+
+# Node.js
+node_modules
+dist
+coverage
+.env
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Dependency directories
+jspm_packages/
+typings/
+
+# AWS
+.aws-sam/
+.localstack/
+
+# TypeScript
+*.tsbuildinfo
+*.d.ts
+
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+
