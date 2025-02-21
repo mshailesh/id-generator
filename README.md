@@ -671,3 +671,64 @@ describe('Database', () => {
 });
 
 
+import RuleEngineWrapper from './RuleEngineWrapper';
+import FactService from './services/FactService';
+import RuleService from './services/RuleService';
+import S3Service from './services/S3Service';
+
+jest.mock('./services/FactService');
+jest.mock('./services/RuleService');
+jest.mock('./services/S3Service');
+
+describe('RuleEngineWrapper', () => {
+  let ruleEngineWrapper: RuleEngineWrapper;
+  let factServiceMock: jest.Mocked<FactService>;
+  let ruleServiceMock: jest.Mocked<RuleService>;
+  let s3ServiceMock: jest.Mocked<S3Service>;
+
+  beforeEach(() => {
+    factServiceMock = new FactService() as jest.Mocked<FactService>;
+    ruleServiceMock = new RuleService() as jest.Mocked<RuleService>;
+    s3ServiceMock = new S3Service() as jest.Mocked<S3Service>;
+
+    ruleEngineWrapper = new RuleEngineWrapper();
+    (ruleEngineWrapper as any).factService = factServiceMock;
+    (ruleEngineWrapper as any).ruleService = ruleServiceMock;
+    (ruleEngineWrapper as any).s3Service = s3ServiceMock;
+  });
+
+  it('should fetch fact data', async () => {
+    const query = 'testQuery';
+    const mockData = { data: 'testData' };
+    factServiceMock.fetchFactData.mockResolvedValue(mockData);
+
+    const result = await ruleEngineWrapper.fetchFactData(query);
+    expect(result).toEqual(mockData);
+    expect(factServiceMock.fetchFactData).toHaveBeenCalledWith(query);
+  });
+
+  it('should evaluate rules', async () => {
+    const rules = [{ id: 1, condition: 'testCondition' }];
+    const dynamicFacts = { key: { value: 'testValue' } };
+    const mockResult = { result: 'testResult' };
+    ruleServiceMock.evaluateRules.mockResolvedValue(mockResult);
+
+    const result = await ruleEngineWrapper.evaluateRules(rules, dynamicFacts);
+    expect(result).toEqual(mockResult);
+    expect(ruleServiceMock.addRules).toHaveBeenCalledWith(rules);
+    expect(ruleServiceMock.evaluateRules).toHaveBeenCalledWith(dynamicFacts);
+  });
+
+  it('should fetch rules from S3', async () => {
+    const bucket = 'testBucket';
+    const key = 'testKey';
+    const mockRules = [{ id: 1, condition: 'testCondition' }];
+    s3ServiceMock.fetchRulesFromS3.mockResolvedValue(mockRules);
+
+    const result = await ruleEngineWrapper.fetchRulesFromS3(bucket, key);
+    expect(result).toEqual(mockRules);
+    expect(s3ServiceMock.fetchRulesFromS3).toHaveBeenCalledWith(bucket, key);
+  });
+});
+
+
