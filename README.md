@@ -731,47 +731,31 @@ describe('RuleEngineWrapper', () => {
   });
 });
 
-# Database configuration
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=yourUsername
-DB_PASSWORD=yourPassword
-DB_DATABASE=yourDatabase
-
-# S3 configuration
-AWS_ENDPOINT=http://localhost:4566
-AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=test
-AWS_SECRET_ACCESS_KEY=test
-
-
-# Node.js
-node_modules
-dist
-coverage
-.env
-
-# Logs
-logs
-*.log
-npm-debug.log*
-
-# Dependency directories
-jspm_packages/
-typings/
-
-# AWS
-.aws-sam/
-.localstack/
-
-# TypeScript
-*.tsbuildinfo
-*.d.ts
-
-# MacOS
-.DS_Store
-
-# Windows
-Thumbs.db
+module.exports = {
+  env: {
+    browser: true,
+    es2021: true,
+    node: true,
+  },
+  extends: [
+    'eslint:recommended',
+    'plugin:@typescript-eslint/recommended'
+  ],
+  parser: '@typescript-eslint/parser',
+  parserOptions: {
+    ecmaVersion: 12,
+    sourceType: 'module',
+  },
+  plugins: [
+    '@typescript-eslint'
+  ],
+  rules: {
+    'indent': ['error', 2],
+    'quotes': ['error', 'single'],
+    'semi': ['error', 'always'],
+    '@typescript-eslint/explicit-function-return-type': ['error'],
+    '@typescript-eslint/no-explicit-any': ['error']
+  },
+};
 
 
