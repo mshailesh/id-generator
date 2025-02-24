@@ -758,33 +758,35 @@ module.exports = {
   },
 };
 
-import { ESLint } from 'eslint';
+import { FlatCompat } from '@eslint/eslintrc';
+import * as tsPlugin from '@typescript-eslint/eslint-plugin';
+import * as tsParser from '@typescript-eslint/parser';
+
+const compat = new FlatCompat({
+  baseDirectory: import.meta.url,
+});
 
 export default [
+  // Apply TypeScript rules
   {
-    files: ['**/*.ts'],
-    extends: ['eslint:recommended', 'plugin:@typescript-eslint/recommended'],
-    parser: '@typescript-eslint/parser',
-    plugins: ['@typescript-eslint'],
+    files: ['src/**/*.ts'],  // Include only src directory
+    plugins: {
+      '@typescript-eslint': tsPlugin,
+    },
+    languageOptions: {
+      parser: tsParser,
+      parserOptions: {
+        project: './tsconfig.json',
+      },
+    },
     rules: {
-      // Customize your rules here
+      ...tsPlugin.configs.recommended.rules,
       'semi': ['error', 'always'],
       'quotes': ['error', 'single'],
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
-      // Add other rules as needed
-    },
-  },
-  {
-    files: ['**/*.test.ts'],
-    env: {
-      jest: true,
-    },
-    extends: ['plugin:jest/recommended'],
-    plugins: ['jest'],
-    rules: {
-      // Jest-specific rules
     },
   },
 ];
+
 
 
