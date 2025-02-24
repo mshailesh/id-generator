@@ -758,14 +758,33 @@ module.exports = {
   },
 };
 
+import { ESLint } from 'eslint';
 
-module.exports = {
-  testEnvironment: 'node',
-  transform: {
-    '^.+\\.tsx?$': 'ts-jest',
+export default [
+  {
+    files: ['**/*.ts'],
+    extends: ['eslint:recommended', 'plugin:@typescript-eslint/recommended'],
+    parser: '@typescript-eslint/parser',
+    plugins: ['@typescript-eslint'],
+    rules: {
+      // Customize your rules here
+      'semi': ['error', 'always'],
+      'quotes': ['error', 'single'],
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      // Add other rules as needed
+    },
   },
-  testRegex: '(/__tests__/.*|(\\.|/)(test|spec))\\.tsx?$',
-  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
-};
+  {
+    files: ['**/*.test.ts'],
+    env: {
+      jest: true,
+    },
+    extends: ['plugin:jest/recommended'],
+    plugins: ['jest'],
+    rules: {
+      // Jest-specific rules
+    },
+  },
+];
 
 
