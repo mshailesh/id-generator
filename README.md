@@ -314,8 +314,75 @@ export default RuleEngineWrapper;
 
 ```typescript
 // tests/RuleEngineWrapper.test.ts
+// tests/RuleEngineWrapper.test.ts
 import RuleEngineWrapper from '../ruleEngineWrapper';
 import FactService from '../services/FactService';
 import RuleService from '../services/RuleService';
 import S3Service from '../services/S3Service';
-import { Rule, Event, Fact } from 'json-rules-engine
+import { Rule, Event, Fact } from 'json-rules-engine';
+
+jest.mock('../services/FactService');
+jest.mock('../services/RuleService');
+jest.mock('../services/S3Service');
+
+describe('RuleEngineWrapper', () => {
+  let ruleEngineWrapper: RuleEngineWrapper;
+  let factService: any;
+  let ruleService: any;
+  let s3Service: any;
+
+  beforeAll(() => {
+    factService = new FactService();
+    ruleService = new RuleService();
+    s3Service = new S3Service();
+    ruleEngineWrapper = new RuleEngineWrapper();
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should fetch fact data', async () => {
+    const query = 'SELECT * FROM facts';
+    const expectedResult = [{ id: 1, name: 'fact1' }];
+    factService.fetchFactData.mockResolvedValue(expectedResult);
+
+    const result = await ruleEngineWrapper.fetchFactData(query);
+
+    expect(factService.fetchFactData).toHaveBeenCalledWith(query);
+    expect(result).toEqual(expectedResult);
+  });
+
+  it('should evaluate rules with dynamic facts', async () => {
+    const rules: Rule[] = [
+      new Rule({
+        conditions: { all: [{ fact: 'fact1', operator: 'equal', value: true }] },
+        event: { type: 'event1', params: { message: 'Event triggered' } },
+      }),
+    ];
+    const dynamicFacts: Record<string, Fact> = {
+      fact1: async (params: any, almanac: any) => true,
+    };
+    const expectedEvents: Event[] = [{ type: 'event1', params: { message: 'Event triggered' } }];
+    ruleService.evaluateRules.mockResolvedValue(expectedEvents);
+
+    const result = await ruleEngineWrapper.evaluateRules(rules, dynamicFacts);
+
+    expect(ruleService.addRules).toHaveBeenCalledWith(rules);
+    expect(ruleService.evaluateRules).toHaveBeenCalledWith(dynamicFacts);
+    expect(result).toEqual(expectedEvents);
+  });
+
+  it('should fetch rules from S3', async () => {
+    const bucket = 'test-bucket';
+    const key = 'test-key';
+    const expectedRules = [{ conditions: { all: [] }, event: { type: 'test' } }];
+    s3Service.fetchRulesFromS3.mockResolvedValue(expectedRules);
+
+    const result = await ruleEngineWrapper.fetchRulesFromS3(bucket, key);
+
+    expect(s3Service.fetchRulesFromS3).toHaveBeenCalledWith(bucket, key);
+    expect(result).toEqual(expectedRules);
+  });
+});
+
