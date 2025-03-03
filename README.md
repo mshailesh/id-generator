@@ -1,11 +1,15 @@
-Absolutely! Here is the complete code for FactService, RuleService, S3Service, and RuleEngineWrapper, along with their respective tests.
+Sure! Below is the complete code for `FactService`, `RuleService`, `S3Service`, and `RuleEngineWrapper`, along with their respective test files.
 
-FactService
-Code
-typescript
+### FactService
+
+#### FactService Code
+
+```typescript
 // services/FactService.ts
 import pgPromise from 'pg-promise';
 import logger from '../logger';
+
+type FactData = Record<string, any>;
 
 class FactService {
   private db: pgPromise.IDatabase<any>;
@@ -30,8 +34,11 @@ class FactService {
 }
 
 export default FactService;
-Test
-typescript
+```
+
+#### FactService Test
+
+```typescript
 // tests/FactService.test.ts
 import FactService from '../services/FactService';
 import pgPromise from 'pg-promise';
@@ -65,9 +72,13 @@ describe('FactService', () => {
     expect(result).toEqual(expectedResult);
   });
 });
-RuleService
-Code
-typescript
+```
+
+### RuleService
+
+#### RuleService Code
+
+```typescript
 // services/RuleService.ts
 import { Engine, Rule, Fact, Almanac, Event } from 'json-rules-engine';
 import logger from '../logger';
@@ -97,13 +108,16 @@ class RuleService {
 
     const { events } = await this.engine.run({});
     logger.info('Rules evaluated', { events });
-    return events;
+    return events as Event[];
   }
 }
 
 export default RuleService;
-Test
-typescript
+```
+
+#### RuleService Test
+
+```typescript
 // tests/RuleService.test.ts
 import { Engine, Rule, Fact, Almanac, Event } from 'json-rules-engine';
 import RuleService from '../services/RuleService';
@@ -164,9 +178,13 @@ describe('RuleService', () => {
     expect(result).toEqual(expectedEvents);
   });
 });
-S3Service
-Code
-typescript
+```
+
+### S3Service
+
+#### S3Service Code
+
+```typescript
 // services/S3Service.ts
 import { S3 } from 'aws-sdk';
 import * as dotenv from 'dotenv';
@@ -199,4 +217,105 @@ class S3Service {
     logger.debug('Fetching rules from S3', { bucket, key });
     const data = await this.s3.getObject(params).promise();
     const rules = JSON.parse(data.Body.toString('utf-8')) as T;
-    logger.debug('Rules fetched from S3
+    logger.debug('Rules fetched from S3', { rules });
+    return rules;
+  }
+}
+
+export default S3Service;
+```
+
+#### S3Service Test
+
+```typescript
+// tests/S3Service.test.ts
+import S3Service from '../services/S3Service';
+import { S3 } from 'aws-sdk';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
+
+jest.mock('aws-sdk');
+
+describe('S3Service', () => {
+  let s3Service: S3Service;
+  let s3: any;
+
+  beforeAll(() => {
+    s3 = {
+      getObject: jest.fn().mockReturnThis(),
+      promise: jest.fn(),
+    };
+    (S3 as jest.Mock).mockReturnValue(s3);
+    s3Service = new S3Service();
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should fetch rules from S3', async () => {
+    const bucket = 'test-bucket';
+    const key = 'test-key';
+    const expectedRules = [{ conditions: { all: [] }, event: { type: 'test' } }];
+    const s3Response = { Body: Buffer.from(JSON.stringify(expectedRules)) };
+    s3.promise.mockResolvedValue(s3Response);
+
+    const result = await s3Service.fetchRulesFromS3(bucket, key);
+
+    expect(s3.getObject).toHaveBeenCalledWith({ Bucket: bucket, Key: key });
+    expect(result).toEqual(expectedRules);
+  });
+});
+```
+
+### RuleEngineWrapper
+
+#### RuleEngineWrapper Code
+
+```typescript
+// ruleEngineWrapper.ts
+import FactService from './services/FactService';
+import RuleService from './services/RuleService';
+import S3Service from './services/S3Service';
+import { Rule, Fact, Event } from 'json-rules-engine';
+
+type DynamicFact = (params: any, almanac: any) => Promise<any>;
+
+class RuleEngineWrapper {
+  private factService: FactService;
+  private ruleService: RuleService;
+  private s3Service: S3Service;
+
+  constructor() {
+    this.factService = new FactService();
+    this.ruleService = new RuleService();
+    this.s3Service = new S3Service();
+  }
+
+  async fetchFactData<T>(query: string): Promise<T[]> {
+    return this.factService.fetchFactData(query);
+  }
+
+  async evaluateRules(rules: Rule[], dynamicFacts: Record<string, DynamicFact>): Promise<Event[]> {
+    this.ruleService.addRules(rules);
+    return this.ruleService.evaluateRules(dynamicFacts);
+  }
+
+  async fetchRulesFromS3<T>(bucket: string, key: string): Promise<T> {
+    return this.s3Service.fetchRulesFromS3(bucket, key);
+  }
+}
+
+export default RuleEngineWrapper;
+```
+
+#### RuleEngineWrapper Test
+
+```typescript
+// tests/RuleEngineWrapper.test.ts
+import RuleEngineWrapper from '../ruleEngineWrapper';
+import FactService from '../services/FactService';
+import RuleService from '../services/RuleService';
+import S3Service from '../services/S3Service';
+import { Rule, Event, Fact } from 'json-rules-engine
