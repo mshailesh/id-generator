@@ -386,3 +386,317 @@ describe('RuleEngineWrapper', () => {
   });
 });
 
+
+
+
+
+--------------------------------------------------***------------------------
+
+Sure! Let's update the implementation to use AWS Lambda Powertools for logging and include logging statements.
+
+### Directory Structure
+```
+project-root/
+│
+├── queries/
+│   ├── index.ts
+│
+├── models/
+│   ├── FactData.ts
+│   ├── RuleConfig.ts
+│
+├── utils/
+│   ├── logger.ts
+│
+├── dynamicFacts.ts
+├── types.ts
+├── handler.ts
+├── rules.json
+├── tests/
+│   ├── handler.test.ts
+│   ├── dynamicFacts.test.ts
+│
+├── .env
+└── package.json
+```
+
+### Queries
+
+#### index.ts
+```typescript
+export const getMarketSegmentsQuery = `
+  SELECT market_segment_code, calendar_id
+  FROM market_segment
+  WHERE start_date <= NOW() AND end_date >= NOW()
+`;
+
+export const getNextTradingDateQuery = (calendarId: string) => `
+  SELECT MIN(c.trade_date) AS next_trade_date
+  FROM calendar c
+  WHERE c.calendar_id = '${calendarId}'
+    AND c.trade_date > NOW()
+    AND c.trade_date_indicator = 'Y'
+`;
+
+export const getEligibleInstrumentsQuery = (marketSegmentCode: string, nextTradingDate: string) => `
+  SELECT 
+    i.instrument_code,
+    i.commodity_code,
+    i.instrument_type,
+    i.first_trading_date,
+    i.last_trading_date,
+    i.expiry_date,
+    ac.commodity_code as applicable_commodity_code,
+    ac.instrument_type as applicable_instrument_type,
+    ttm.trade_type,
+    ttm.commodity_code as trade_commodity_code,
+    ttm.instrument_type as trade_instrument_type,
+    ms.market_segment_code,
+    c.trade_date
+  FROM instruments i
+  JOIN applicable_contracts ac ON i.commodity_code = ac.commodity_code AND i.instrument_type = ac.instrument_type
+  JOIN trade_type_mapping ttm ON i.commodity_code = ttm.commodity_code AND i.instrument_type = ttm.instrument_type
+  JOIN market_segment ms ON i.market_segment_code = ms.market_segment_code
+  JOIN calendar c ON ms.calendar_id = c.calendar_id
+  WHERE ms.market_segment_code = '${marketSegmentCode}'
+    AND c.trade_date = '${nextTradingDate}'
+    AND ttm.trade_type IN ('block', 'efp', 'delivery efp')
+    AND i.commodity_code IN (SELECT commodity_code FROM applicable_contracts)
+    AND i.market_segment_code = '${marketSegmentCode}'
+    AND (
+      (ttm.trade_type = 'delivery efp' AND c.trade_date BETWEEN i.last_trading_date AND i.expiry_date)
+      OR (ttm.trade_type IN ('block', 'efp') AND c.trade_date BETWEEN i.first_trading_date AND i.last_trading_date)
+    )
+`;
+```
+
+### Models
+
+#### FactData.ts
+```typescript
+export interface FactData {
+  instrument_code: string;
+  commodity_code: string;
+  instrument_type: string;
+  first_trading_date: string;
+  last_trading_date: string;
+  expiry_date: string;
+  trade_type: string;
+  trade_subtype: string;
+  market_segment_code: string;
+  // Add other fields as needed
+}
+```
+
+#### RuleConfig.ts
+```typescript
+export interface RuleConfig {
+  bucket: string;
+  key: string;
+  dynamicFacts: Record<string, any>;
+}
+```
+
+### Utilities
+
+#### logger.ts
+```typescript
+import { Logger } from '@aws-lambda-powertools/logger';
+
+const logger = new Logger({ serviceName: 'YourServiceName' });
+
+export default logger;
+```
+
+### Dynamic Facts
+
+#### dynamicFacts.ts
+```typescript
+import { getMarketSegmentsQuery, getNextTradingDateQuery, getEligibleInstrumentsQuery } from './queries/index';
+import { FactService, RuleService, S3Service } from 'your-library';
+import logger from './utils/logger';
+
+const ruleEngineWrapper = new RuleEngineWrapper(new FactService(process.env), new RuleService(), new S3Service());
+
+const getMarketSegments = async () => {
+  logger.info('Fetching market segments');
+  const data = await ruleEngineWrapper.fetchFactData(getMarketSegmentsQuery);
+  logger.info('Market segments fetched', { data });
+  return data;
+};
+
+const getNextTradingDate = async (params, almanac) => {
+  const marketSegments = await almanac.factValue("marketSegments");
+
+  const queries = marketSegments.map(segment => getNextTradingDateQuery(segment.calendar_id));
+  const promises = queries.map(query => ruleEngineWrapper.fetchFactData(query));
+  const results = await Promise.all(promises);
+  logger.info('Next trading dates fetched', { results });
+  return results.map(res => res[0]);
+};
+
+const getEligibleInstruments = async (params, almanac) => {
+  const marketSegments = await almanac.factValue("marketSegments");
+  const nextTradingDates = await almanac.factValue("nextTradingDate");
+
+  const queries = marketSegments.map((segment, index) => 
+    getEligibleInstrumentsQuery(segment.market_segment_code, nextTradingDates[index].next_trade_date)
+  );
+  
+  const promises = queries.map(query => ruleEngineWrapper.fetchFactData(query));
+  const results = await Promise.all(promises);
+  logger.info('Eligible instruments fetched', { results });
+  return results.flat();
+};
+
+export const dynamicFacts: { [key: string]: any } = {
+  marketSegments: getMarketSegments,
+  nextTradingDate: getNextTradingDate,
+  eligibleInstruments: getEligibleInstruments
+};
+```
+
+### Lambda Handler
+
+#### handler.ts
+```typescript
+import { APIGatewayProxyHandler } from 'aws-lambda';
+import { dynamicFacts } from './dynamicFacts';
+import { RuleConfig } from './models/RuleConfig';
+import logger from './utils/logger';
+import { RuleEngineWrapper, FactService, RuleService, S3Service } from 'your-library';
+
+const ruleEngineWrapper = new RuleEngineWrapper(new FactService(process.env), new RuleService(), new S3Service());
+
+export const handler: APIGatewayProxyHandler = async (event) => {
+  try {
+    logger.info('Handler invoked', { event });
+    const { bucket, key } = JSON.parse(event.body!) as RuleConfig;
+
+    // Fetch rules from S3
+    const rules = await ruleEngineWrapper.fetchRulesFromS3(bucket, key);
+    logger.info('Rules fetched from S3', { rules });
+
+    // Evaluate rules with dynamic facts
+    const results = await ruleEngineWrapper.evaluateRules(rules, dynamicFacts);
+    logger.info('Rules evaluated', { results });
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify(results),
+    };
+  } catch (error) {
+    logger.error('Error in handler', { error });
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: 'Internal Server Error' }),
+    };
+  }
+};
+```
+
+### Rules Definition
+
+#### rules.json
+```json
+[
+  {
+    "conditions": {
+      "all": [
+        {
+          "fact": "marketSegments",
+          "operator": "greaterThanInclusive",
+          "value": "$today",
+          "path": "$.market_segment_code"
+        },
+        {
+          "fact": "nextTradingDate",
+          "operator": "greaterThanInclusive",
+          "value": "$today",
+          "path": "$.next_trade_date"
+        }
+      ]
+    },
+    "event": {
+      "type": "nextTradingDate",
+      "params": {
+        "message": "Next trading date found"
+      }
+    },
+    "priority": 10
+  },
+  {
+    "conditions": {
+      "all": [
+        {
+          "fact": "eligibleInstruments",
+          "operator": "greaterThanInclusive",
+          "value": "$nextTradingDate",
+          "path": "$.first_trading_date"
+        },
+        {
+          "fact": "eligibleInstruments",
+          "operator": "lessThanInclusive",
+          "value": "$nextTradingDate",
+          "path": "$.last_trading_date"
+        },
+        {
+          "fact": "eligibleInstruments",
+          "operator": "in",
+          "value": ["block", "efp"],
+          "path": "$.trade_subtype"
+        },
+        {
+          "fact": "eligibleInstruments",
+          "operator": "equal",
+          "value": "$marketSegmentCode",
+          "path": "$.market_segment_code"
+        }
+      ]
+    },
+    "event": {
+      "type": "blockAndEfpInstrument",
+      "params": {
+        "message": "Block and EFP instrument is eligible"
+      }
+    },
+    "priority": 5
+  },
+  {
+    "conditions": {
+      "all": [
+        {
+          "fact": "eligibleInstruments",
+          "operator": "greaterThanInclusive",
+          "value": "$nextTradingDate",
+          "path": "$.last_trading_date"
+        },
+        {
+          "fact": "eligibleInstruments",
+          "operator": "lessThanInclusive",
+          "value": "$nextTradingDate",
+          "path": "$.expiry_date"
+        },
+        {
+          "fact": "eligibleInstruments",
+          "operator": "equal",
+          "value": "delivery efp",
+          "path": "$.trade_type"
+        },
+        {
+          "fact": "eligibleInstruments",
+          "operator": "equal",
+          "value": "$marketSegmentCode",
+          "path": "$.market_segment_code"
+        }
+      ]
+    },
+    "event": {
+      "type": "deliveryEfpInstrument",
+      "params": {
+        "message": "Delivery EFP instrument is eligible"
+      }
+    },
+    "priority": 5
+  }
+
