@@ -700,3 +700,34 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     "priority": 5
   }
 
+
+
+ async evaluateRulesWithParamsInjection(
+    dynamicFacts: Record<string, DynamicFact>,
+    paramsInjector: (event: Event, almanac: Almanac) => Promise<Record<string, any>>
+  ): Promise<Event[]> {
+    for (const [factId, factFn] of Object.entries(dynamicFacts)) {
+      this.engine.addFact(factId, factFn);
+    }
+    logger.debug('Dynamic facts added to the engine', { dynamicFacts });
+
+    const { events } = await this.engine.run({});
+
+    // Inject additional parameters into event params
+    for (const event of events) {
+      const additionalParams = await paramsInjector(event, this.engine.almanac);
+      Object.assign(event.params, additionalParams); // Merge additional params into event.params
+    }
+
+    logger.info('Rules evaluated with injected params', { events });
+    return events as Event[];
+  }
+
+
+
+// Define a params injector function
+const paramsInjector = async (event: Event, almanac: Almanac) => {
+  const instrumentDetails = await almanac.factValue('instrumentDetails'); // Retrieve instrument details dynamically
+  return { instrument_code: instrumentDetails.instrument_code }; // Inject instrument_code into event params
+};
+
