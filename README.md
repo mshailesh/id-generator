@@ -772,6 +772,313 @@ function assignSequenceNumbersByGroup(instruments: Instrument[]): SequencedInstr
     });
   }
 
+
+
+
+
+To handle **multiple rules** where each rule is applied to an instrument sequentially, and if any rule fails for an instrument, that instrument is skipped, we can refactor the code to process each instrument individually. This ensures that if an instrument fails a rule, it is discarded immediately, and the next instrument is processed.
+
+Here’s how we can achieve this:
+
+---
+
+### **1. Key Requirements**
+1. **Load All Instruments at Once:** Fetch all instruments from the database in a single query.
+2. **Process Each Instrument Individually:** Apply rules sequentially to each instrument.
+3. **Skip Instrument if Any Rule Fails:** If an instrument fails any rule, discard it and move to the next instrument.
+4. **Store Valid Instruments:** Only instruments that pass all rules are stored in the database.
+
+---
+
+### **2. Refactored Code Structure**
+We will refactor the code into the following components:
+1. **Instrument Loader:** Fetches all instruments from the database.
+2. **Rule Handlers:** Apply rules sequentially to each instrument.
+3. **Instrument Processor:** Loops through each instrument and applies the rule chain.
+4. **Database Storage Handler:** Stores valid instruments in the database.
+
+---
+
+### **3. Refactored Implementation**
+
+#### **3.1. Instrument Loader**
+This component is responsible for loading all instruments from the database at once.
+
+```typescript
+class InstrumentLoader {
+  async loadInstruments(): Promise<any[]> {
+    console.log("Loading all instruments from the database...");
+    const instruments = await loadAllInstrumentsFromDB(); // Fetch all instruments
+    return instruments;
+  }
+}
+
+// Helper function to simulate database query
+async function loadAllInstrumentsFromDB(): Promise<any[]> {
+  return [
+    { id: "1", rule1Condition: true, rule2Condition: true },
+    { id: "2", rule1Condition: false, rule2Condition: true }, // Fails Rule 1
+    { id: "3", rule1Condition: true, rule2Condition: false }, // Fails Rule 2
+    { id: "4", rule1Condition: true, rule2Condition: true },
+  ];
+}
+```
+
+---
+
+#### **3.2. Rule Handlers**
+Each rule handler applies a specific rule to the instrument. If the rule fails, it throws an error.
+
+```typescript
+abstract class RuleHandler {
+  private nextHandler: RuleHandler | null = null;
+
+  setNext(handler: RuleHandler): RuleHandler {
+    this.nextHandler = handler;
+    return handler;
+  }
+
+  async handle(instrument: any): Promise<any> {
+    try {
+      // Apply the rule
+      const processedInstrument = await this.applyRule(instrument);
+
+      // Pass to the next rule handler
+      if (this.nextHandler) {
+        return this.nextHandler.handle(processedInstrument);
+      }
+
+      // Return the instrument if no more handlers
+      return processedInstrument;
+    } catch (error) {
+      // Stop processing for this instrument if the rule fails
+      throw error;
+    }
+  }
+
+  // Abstract method to be implemented by concrete handlers
+  abstract applyRule(instrument: any): Promise<any>;
+}
+
+class Rule1Handler extends RuleHandler {
+  async applyRule(instrument: any): Promise<any> {
+    console.log(`Applying Rule 1 to instrument ${instrument.id}`);
+    if (!instrument.rule1Condition) {
+      throw new Error(`Instrument ${instrument.id} failed Rule 1`);
+    }
+    return instrument;
+  }
+}
+
+class Rule2Handler extends RuleHandler {
+  async applyRule(instrument: any): Promise<any> {
+    console.log(`Applying Rule 2 to instrument ${instrument.id}`);
+    if (!instrument.rule2Condition) {
+      throw new Error(`Instrument ${instrument.id} failed Rule 2`);
+    }
+    return instrument;
+  }
+}
+```
+
+---
+
+#### **3.3. Instrument Processor**
+This component loops through each instrument and applies the rule chain. If an instrument passes all rules, it is added to the list of valid instruments.
+
+```typescript
+class InstrumentProcessor {
+  private ruleHandlerChain: RuleHandler;
+
+  constructor(ruleHandlerChain: RuleHandler) {
+    this.ruleHandlerChain = ruleHandlerChain;
+  }
+
+  async processInstruments(instruments: any[]): Promise<any[]> {
+    const validInstruments: any[] = [];
+
+    for (const instrument of instruments) {
+      try {
+        // Apply the rule chain to the instrument
+        const processedInstrument = await this.ruleHandlerChain.handle(instrument);
+        validInstruments.push(processedInstrument);
+      } catch (error) {
+        console.error(`Instrument ${instrument.id} failed:`, error.message);
+      }
+    }
+
+    return validInstruments;
+  }
+}
+```
+
+---
+
+#### **3.4. Database Storage Handler**
+This component stores valid instruments in the database.
+
+```typescript
+class DatabaseStorageHandler {
+  async storeInstruments(instruments: any[]): Promise<void> {
+    console.log("Storing valid instruments in the database...");
+    for (const instrument of instruments) {
+      await storeInstrumentInDB(instrument);
+    }
+  }
+}
+
+// Helper function to simulate database storage
+async function storeInstrumentInDB(instrument: any): Promise<void> {
+  console.log(`Storing instrument ${instrument.id}`);
+}
+```
+
+---
+
+#### **3.5. Lambda Handler**
+The Lambda handler sets up the chain of responsibility, loads all instruments, processes them, and stores the valid ones.
+
+```typescript
+const handler = async (event: any) => {
+  const instrumentLoader = new InstrumentLoader();
+  const instruments = await instrumentLoader.loadInstruments();
+
+  const rule1Handler = new Rule1Handler();
+  const rule2Handler = new Rule2Handler();
+  rule1Handler.setNext(rule2Handler);
+
+  const instrumentProcessor = new InstrumentProcessor(rule1Handler);
+  const validInstruments = await instrumentProcessor.processInstruments(instruments);
+
+  const dbHandler = new DatabaseStorageHandler();
+  await dbHandler.storeInstruments(validInstruments);
+
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ message: "Processing complete", validInstruments }),
+  };
+};
+
+export { handler };
+```
+
+---
+
+### **4. Test Cases**
+
+We will use a testing framework like **Jest** to write test cases.
+
+#### **4.1. Setup Jest**
+Install Jest if not already installed:
+
+```bash
+npm install --save-dev jest
+```
+
+Add a `jest.config.js` file:
+
+```javascript
+module.exports = {
+  testEnvironment: "node",
+};
+```
+
+---
+
+#### **4.2. Test Cases**
+
+```typescript
+const { handler } = require("./path/to/your/lambda/handler");
+
+describe("Instrument Processing", () => {
+  it("should load instruments, apply rules, and store valid instruments", async () => {
+    const event = {}; // Mock event
+    const result = await handler(event);
+
+    // Check if the response is correct
+    expect(result.statusCode).toBe(200);
+    expect(result.body).toContain("Processing complete");
+
+    // Check if valid instruments are stored
+    const responseBody = JSON.parse(result.body);
+    expect(responseBody.validInstruments).toEqual([
+      { id: "1", rule1Condition: true, rule2Condition: true },
+      { id: "4", rule1Condition: true, rule2Condition: true },
+    ]);
+  });
+
+  it("should discard instruments that fail Rule 1", async () => {
+    const instruments = [
+      { id: "1", rule1Condition: true, rule2Condition: true },
+      { id: "2", rule1Condition: false, rule2Condition: true }, // Fails Rule 1
+    ];
+
+    const rule1Handler = new Rule1Handler();
+    const instrumentProcessor = new InstrumentProcessor(rule1Handler);
+    const validInstruments = await instrumentProcessor.processInstruments(instruments);
+
+    expect(validInstruments).toEqual([
+      { id: "1", rule1Condition: true, rule2Condition: true },
+    ]);
+  });
+
+  it("should discard instruments that fail Rule 2", async () => {
+    const instruments = [
+      { id: "1", rule1Condition: true, rule2Condition: true },
+      { id: "3", rule1Condition: true, rule2Condition: false }, // Fails Rule 2
+    ];
+
+    const rule1Handler = new Rule1Handler();
+    const rule2Handler = new Rule2Handler();
+    rule1Handler.setNext(rule2Handler);
+
+    const instrumentProcessor = new InstrumentProcessor(rule1Handler);
+    const validInstruments = await instrumentProcessor.processInstruments(instruments);
+
+    expect(validInstruments).toEqual([
+      { id: "1", rule1Condition: true, rule2Condition: true },
+    ]);
+  });
+
+  it("should handle empty instrument list", async () => {
+    const instruments = [];
+
+    const rule1Handler = new Rule1Handler();
+    const instrumentProcessor = new InstrumentProcessor(rule1Handler);
+    const validInstruments = await instrumentProcessor.processInstruments(instruments);
+
+    expect(validInstruments).toEqual([]);
+  });
+});
+```
+
+---
+
+### **5. Running Tests**
+Run the tests using Jest:
+
+```bash
+npx jest
+```
+
+---
+
+### **6. Expected Output**
+- **Test 1:** Valid instruments (`id: 1` and `id: 4`) are processed and stored.
+- **Test 2:** Instruments failing Rule 1 are discarded.
+- **Test 3:** Instruments failing Rule 2 are discarded.
+- **Test 4:** Empty instrument list is handled gracefully.
+
+---
+
+### **7. Benefits**
+- **Efficient Processing:** Instruments are processed one at a time, ensuring rules are applied correctly.
+- **Error Handling:** If a rule fails for an instrument, it is discarded immediately.
+- **Modularity:** Each rule handler is independent and can be modified or extended easily.
+- **Scalability:** New rules can be added to the chain without affecting existing logic.
+
+This approach ensures that the system is robust, maintainable, and adheres to clean code principles while meeting the specific requirements.
+
   return result;
 }
 
