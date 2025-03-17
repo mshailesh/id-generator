@@ -1082,3 +1082,249 @@ This approach ensures that the system is robust, maintainable, and adheres to cl
   return result;
 }
 
+
+To better structure your code in a maintainable and modular way, here's how you can organize the different components into separate files. This approach adheres to clean code principles and ensures reusability and scalability.
+
+---
+
+### **Proposed Folder and File Structure**
+Here's a suggested folder structure for your project:
+
+```
+src/
+│
+├── handlers/
+│   ├── RuleHandler.ts
+│   ├── Rule1Handler.ts
+│   ├── Rule2Handler.ts
+│   ├── SequencingHandler.ts
+│   ├── Rule3Handler.ts
+│
+├── processors/
+│   ├── InstrumentProcessor.ts
+│
+├── utils/
+│   ├── SequencingUtil.ts
+│   ├── DatabaseStorageHandler.ts
+│
+├── loaders/
+│   ├── InstrumentLoader.ts
+│
+├── types/
+│   ├── Instrument.ts
+│
+├── tests/
+│   ├── LambdaHandler.test.ts
+│
+├── lambda/
+│   ├── Handler.ts
+│
+├── index.ts
+```
+
+---
+
+### **Detailed Breakdown**
+1. **`handlers/` Folder:**
+   - Contains all the rule handlers, each implementing specific logic while inheriting from the abstract `RuleHandler`.
+
+   **Example: RuleHandler.ts**
+   ```typescript
+   export abstract class RuleHandler {
+     private nextHandler: RuleHandler | null = null;
+
+     setNext(handler: RuleHandler): RuleHandler {
+       this.nextHandler = handler;
+       return handler;
+     }
+
+     async handle(instrument: any): Promise<any> {
+       if (!(await this.applyRule(instrument))) {
+         console.log(`Instrument ${instrument.id} failed ${this.constructor.name}`);
+         return null;
+       }
+       return this.nextHandler ? this.nextHandler.handle(instrument) : instrument;
+     }
+
+     abstract applyRule(instrument: any): Promise<boolean>;
+   }
+   ```
+
+   **Example: Rule1Handler.ts**
+   ```typescript
+   import { RuleHandler } from "./RuleHandler";
+
+   export class Rule1Handler extends RuleHandler {
+     async applyRule(instrument: any): Promise<boolean> {
+       return instrument.rule1Condition || false;
+     }
+   }
+   ```
+
+   Repeat for `Rule2Handler`, `SequencingHandler`, and `Rule3Handler`.
+
+2. **`processors/` Folder:**
+   - Contains the core `InstrumentProcessor`, which is responsible for processing the instruments.
+
+   **Example: InstrumentProcessor.ts**
+   ```typescript
+   import { RuleHandler } from "../handlers/RuleHandler";
+
+   export class InstrumentProcessor {
+     private ruleHandlerChain: RuleHandler;
+
+     constructor(ruleHandlerChain: RuleHandler) {
+       this.ruleHandlerChain = ruleHandlerChain;
+     }
+
+     async processInstruments(instruments: any[]): Promise<any[]> {
+       const processedInstruments = [];
+       for (const instrument of instruments) {
+         const result = await this.ruleHandlerChain.handle(instrument);
+         if (result) {
+           processedInstruments.push(result);
+         }
+       }
+       return processedInstruments;
+     }
+   }
+   ```
+
+3. **`utils/` Folder:**
+   - Contains utility functions or classes for generic operations like sequencing and database handling.
+
+   **Example: SequencingUtil.ts**
+   ```typescript
+   export function assignSequenceNumbersByGroup(instruments: any[]): any[] {
+     instruments.sort((a, b) => {
+       return `${a.trade_sub_type}-${a.commodity_code}-${a.instrument_type}-${a.expiry_date}`.localeCompare(
+         `${b.trade_sub_type}-${b.commodity_code}-${b.instrument_type}-${b.expiry_date}`
+       );
+     });
+
+     let sequenceNumber = 0;
+     let previousGroupKey = "";
+     const result = [];
+
+     for (const instrument of instruments) {
+       const currentGroupKey = `${instrument.trade_sub_type}-${instrument.commodity_code}-${instrument.instrument_type}-${instrument.expiry_date}`;
+       if (currentGroupKey !== previousGroupKey) {
+         sequenceNumber++;
+         previousGroupKey = currentGroupKey;
+       }
+       result.push({ ...instrument, sequence_number: sequenceNumber });
+     }
+
+     return result;
+   }
+   ```
+
+   **Example: DatabaseStorageHandler.ts**
+   ```typescript
+   export class DatabaseStorageHandler {
+     async storeInstruments(instruments: any[]): Promise<void> {
+       console.log("Storing instruments:", instruments.map((i) => i.id).join(", "));
+     }
+   }
+   ```
+
+4. **`loaders/` Folder:**
+   - Contains the `InstrumentLoader`, which fetches instruments from the database.
+
+   **Example: InstrumentLoader.ts**
+   ```typescript
+   export class InstrumentLoader {
+     async loadInstruments(): Promise<any[]> {
+       return [
+         { id: "1", rule1Condition: true, rule2Condition: true, rule3Condition: true },
+         { id: "2", rule1Condition: false, rule2Condition: true, rule3Condition: true },
+       ];
+     }
+   }
+   ```
+
+5. **`types/` Folder:**
+   - Contains type definitions for clarity and strict type-checking.
+
+   **Example: Instrument.ts**
+   ```typescript
+   export type Instrument = {
+     id: string;
+     trade_sub_type: string;
+     commodity_code: string;
+     instrument_type: string;
+     expiry_date: string;
+     rule1Condition?: boolean;
+     rule2Condition?: boolean;
+     rule3Condition?: boolean;
+   };
+   ```
+
+6. **`tests/` Folder:**
+   - Contains test files for unit and integration testing.
+
+   **Example: LambdaHandler.test.ts**
+   ```typescript
+   import { handler } from "../lambda/Handler";
+
+   describe("Lambda Handler", () => {
+     it("should process instruments correctly", async () => {
+       const response = await handler({});
+       expect(response.statusCode).toBe(200);
+       const body = JSON.parse(response.body);
+       expect(body.validInstruments.length).toBeGreaterThan(0);
+     });
+   });
+   ```
+
+7. **`lambda/` Folder:**
+   - Contains the entry point for your Lambda function.
+
+   **Example: Handler.ts**
+   ```typescript
+   import { InstrumentLoader } from "../loaders/InstrumentLoader";
+   import { Rule1Handler } from "../handlers/Rule1Handler";
+   import { Rule2Handler } from "../handlers/Rule2Handler";
+   import { SequencingHandler } from "../handlers/SequencingHandler";
+   import { Rule3Handler } from "../handlers/Rule3Handler";
+   import { InstrumentProcessor } from "../processors/InstrumentProcessor";
+   import { DatabaseStorageHandler } from "../utils/DatabaseStorageHandler";
+   import { assignSequenceNumbersByGroup } from "../utils/SequencingUtil";
+
+   export const handler = async (event: any) => {
+     const loader = new InstrumentLoader();
+     const instruments = await loader.loadInstruments();
+
+     const rule1 = new Rule1Handler();
+     const rule2 = new Rule2Handler();
+     const sequencing = new SequencingHandler();
+     const rule3 = new Rule3Handler();
+
+     rule1.setNext(rule2).setNext(sequencing).setNext(rule3);
+
+     const processor = new InstrumentProcessor(rule1);
+     const validInstruments = await processor.processInstruments(instruments);
+
+     const sequencedInstruments = assignSequenceNumbersByGroup(validInstruments);
+
+     const dbHandler = new DatabaseStorageHandler();
+     await dbHandler.storeInstruments(sequencedInstruments);
+
+     return {
+       statusCode: 200,
+       body: JSON.stringify({ message: "Processing complete", validInstruments: sequencedInstruments }),
+     };
+   };
+   ```
+
+---
+
+This structure ensures:
+- **Modularity:** Each component has its own responsibility.
+- **Scalability:** Adding new rules or features becomes easy.
+- **Testability:** Clear separation of concerns makes it easier to write and maintain tests.
+
+Let me know if you'd like further refinements!
+
+
+
