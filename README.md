@@ -731,3 +731,47 @@ const paramsInjector = async (event: Event, almanac: Almanac) => {
   return { instrument_code: instrumentDetails.instrument_code }; // Inject instrument_code into event params
 };
 
+
+interface Instrument {
+  trade_sub_type: string;
+  commodity_code: string;
+  instrument_type: string;
+  instrument_code: string;
+  expiry_date: string;
+}
+
+interface SequencedInstrument extends Instrument {
+  sequence_number: number;
+}
+
+function assignSequenceNumbersByGroup(instruments: Instrument[]): SequencedInstrument[] {
+  // Sort instruments by the group key and expiry_date to maintain order
+  instruments.sort((a, b) => {
+    return `${a.trade_sub_type}-${a.commodity_code}-${a.instrument_type}-${a.expiry_date}`.localeCompare(
+      `${b.trade_sub_type}-${b.commodity_code}-${b.instrument_type}-${b.expiry_date}`
+    );
+  });
+
+  const result: SequencedInstrument[] = [];
+  let sequenceNumber = 0;
+  let previousGroupKey = '';
+
+  for (const instrument of instruments) {
+    // Generate the group key based on trade_sub_type, commodity_code, instrument_type, and expiry_date
+    const currentGroupKey = `${instrument.trade_sub_type}-${instrument.commodity_code}-${instrument.instrument_type}-${instrument.expiry_date}`;
+
+    // Increment sequence number only if the group key changes
+    if (currentGroupKey !== previousGroupKey) {
+      sequenceNumber++; // Increment sequence number for the new group
+      previousGroupKey = currentGroupKey; // Update the previous group key
+    }
+
+    result.push({
+      ...instrument,
+      sequence_number: sequenceNumber,
+    });
+  }
+
+  return result;
+}
+
