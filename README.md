@@ -1357,7 +1357,13 @@ async batchInsertInstruments(instruments: any[]): Promise<void> {
 export default mapInstrumentsToColumns;
 
 
+To align the `FactService` with the changes, ensuring it can support the dynamic generation and execution of `MERGE` queries with multiple `ON` conditions, here’s how it would look:
 
+---
+
+### Updated `FactService`
+
+```typescript
 import pgPromise from 'pg-promise';
 import logger from '../logger';
 
@@ -1429,9 +1435,34 @@ class FactService {
 }
 
 export default FactService;
+```
 
+---
 
+### Key Features of the Updated `FactService`
 
+1. **Generic Query Execution**:
+   - `fetchFactData` handles SELECT queries.
+   - `executeQuery` executes any non-SELECT query (INSERT, UPDATE, DELETE, etc.).
+   
+2. **Dynamic `MERGE` Execution**:
+   - The `mergeData` method generates and executes the `MERGE` query dynamically based on the input data and `ON` conditions.
+   - It takes the following inputs:
+     - `tableName`: The name of the target table.
+     - `data`: An object representing the row to be upserted.
+     - `onColumns`: An array of column names to use in the `ON` condition.
+
+3. **Parameterized Queries**:
+   - Uses parameterized queries to prevent SQL injection and ensure safe query execution.
+
+4. **Detailed Logging**:
+   - Logs all query executions for better traceability and debugging.
+
+---
+
+### Example Usage of `mergeData` in Your Handler
+
+```typescript
 const instrument = {
   instrument_code: "ABC123",
   commodity_code: "GOLD",
@@ -1450,5 +1481,8 @@ try {
 } catch (error) {
   console.error("Error upserting instrument:", error);
 }
+```
 
+---
 
+This updated `FactService` is generic, reusable, and dynamically handles your `MERGE` requirements. Let me know if you'd like further refinements!
