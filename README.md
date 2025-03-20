@@ -1327,4 +1327,65 @@ This structure ensures:
 Let me know if you'd like further refinements!
 
 
+// services/DatabaseStorageHandler.ts
+import pgPromise from 'pg-promise';
+
+class DatabaseStorageHandler {
+  private db: pgPromise.IDatabase<any>;
+
+  constructor() {
+    const pgp = pgPromise();
+    this.db = pgp({
+      host: process.env.RDS_HOST,
+      port: parseInt(process.env.RDS_PORT, 10),
+      user: process.env.RDS_USER,
+      password: process.env.RDS_PASSWORD,
+      database: process.env.RDS_DATABASE,
+    });
+  }
+
+  // Map processed instruments to database columns
+  private mapInstrumentsToColumns(instruments: any[]): any[] {
+    return instruments.map((instrument) => ({
+      id: instrument.id,
+      trade_date: instrument.tradeDate, // Map tradeDate to trade_date
+      rule1_condition: instrument.rule1Condition, // Map rule1Condition to rule1_condition
+      rule2_condition: instrument.rule2Condition, // Map rule2Condition to rule2_condition
+      rule3_condition: instrument.rule3Condition, // Map rule3Condition to rule3_condition
+      priority: instrument.priority, // Map priority
+      sequence_number: instrument.sequenceNumber, // Map sequenceNumber to sequence_number
+    }));
+  }
+
+  async storeInstruments(instruments: any[]): Promise<void> {
+    console.log("Storing valid instruments in the database...");
+
+    if (instruments.length === 0) {
+      console.log("No instruments to store.");
+      return;
+    }
+
+    // Map instruments to database columns
+    const mappedInstruments = this.mapInstrumentsToColumns(instruments);
+
+    // Define the table and columns for the bulk insert
+    const table = new pgPromise.helpers.TableName('instruments'); // Replace with your table name
+    const columns = ['id', 'trade_date', 'rule1_condition', 'rule2_condition', 'rule3_condition', 'priority', 'sequence_number']; // Replace with your column names
+
+    // Generate the bulk insert query
+    const query = pgPromise.helpers.insert(mappedInstruments, columns, table);
+
+    try {
+      // Execute the bulk insert query
+      await this.db.none(query);
+      console.log(`Successfully stored ${instruments.length} instruments.`);
+    } catch (error) {
+      console.error("Failed to store instruments:", error);
+      throw error;
+    }
+  }
+}
+
+export default DatabaseStorageHandler;
+
 
