@@ -1356,3 +1356,99 @@ async batchInsertInstruments(instruments: any[]): Promise<void> {
 
 export default mapInstrumentsToColumns;
 
+
+
+import pgPromise from 'pg-promise';
+import logger from '../logger';
+
+type QueryParameters = any[];
+
+class FactService {
+  private db: pgPromise.IDatabase<any>;
+
+  constructor() {
+    const pgp = pgPromise();
+    this.db = pgp({
+      host: process.env.RDS_HOST,
+      port: parseInt(process.env.RDS_PORT, 10),
+      user: process.env.RDS_USER,
+      password: process.env.RDS_PASSWORD,
+      database: process.env.RDS_DATABASE,
+    });
+  }
+
+  // Generic method for fetching data
+  async fetchFactData<T>(query: string, params: QueryParameters = []): Promise<T[]> {
+    try {
+      logger.debug('Executing fetch query', { query, params });
+      const data = await this.db.any<T>(query, params);
+      logger.debug('Fetch query executed successfully', { data });
+      return data;
+    } catch (error) {
+      logger.error('Error executing fetch query', { error, query, params });
+      throw error;
+    }
+  }
+
+  // Generic method for executing SQL queries (INSERT, UPDATE, MERGE, etc.)
+  async executeQuery(query: string, params: QueryParameters = []): Promise<void> {
+    try {
+      logger.debug('Executing query', { query, params });
+      await this.db.none(query, params);
+      logger.debug('Query executed successfully');
+    } catch (error) {
+      logger.error('Error executing query', { error, query, params });
+      throw error;
+    }
+  }
+
+  // Method to dynamically generate and execute a MERGE query for upsert
+  async mergeData(tableName: string, data: Record<string, any>, onColumns: string[]): Promise<void> {
+    const columns = Object.keys(data).join(", ");
+    const values = Object.keys(data).map((_, index) => `$${index + 1}`).join(", ");
+    const onCondition = onColumns.map((col) => `target.${col} = source.${col}`).join(" AND ");
+
+    const mergeQuery = `
+      MERGE INTO ${tableName} AS target
+      USING (VALUES (${values})) AS source (${columns})
+      ON ${onCondition}
+      WHEN NOT MATCHED THEN
+        INSERT (${columns})
+        VALUES (${values});
+    `;
+
+    try {
+      logger.debug('Executing MERGE query', { mergeQuery, data });
+      await this.executeQuery(mergeQuery, Object.values(data));
+      logger.debug('MERGE query executed successfully');
+    } catch (error) {
+      logger.error('Error executing MERGE query', { error, mergeQuery, data });
+      throw error;
+    }
+  }
+}
+
+export default FactService;
+
+
+
+const instrument = {
+  instrument_code: "ABC123",
+  commodity_code: "GOLD",
+  instrument_type: "FUTURE",
+  first_trading_date: "2025-03-22",
+  last_trading_date: "2025-12-31",
+  priority: 1,
+  sequence_number: 100,
+};
+
+const onColumns = ["instrument_code", "commodity_code", "instrument_type"];
+
+try {
+  await factService.mergeData("instruments", instrument, onColumns);
+  console.log("Instrument upserted successfully");
+} catch (error) {
+  console.error("Error upserting instrument:", error);
+}
+
+
