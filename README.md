@@ -1388,42 +1388,49 @@ class FactService {
   }
 
   async mergeInstruments(tableName: string, dataList: Record<string, any>[], onColumns: string[]): Promise<void> {
-  const firstEntry = dataList[0];
-  if (!firstEntry) {
+  if (!dataList.length) {
     logger.info('No data to merge');
     return;
   }
 
-  // Prepare columns and placeholders for INSERT
+  // Prepare the `MERGE` query
+  const firstEntry = dataList[0];
   const columns = Object.keys(firstEntry).join(", ");
   const placeholders = Object.keys(firstEntry).map((key, i) => {
-    // NOTE: Using ::DATE for trade_date to ensure proper type casting in PostgreSQL.
-    // There is currently no better way to achieve this at the SQL level directly while keeping logic clean.
+    // Cast `trade_date` to `::DATE` in SQL
     return key === 'trade_date' ? `$${i + 1}::DATE` : `$${i + 1}`;
   }).join(", ");
-
-  // Prepare the ON CONFLICT clause
-  const onConflictColumns = onColumns.join(", ");
+  
+  // Dynamically create the ON condition
+  const onCondition = onColumns.map((col) => `target.${col} = source.${col}`).join(" AND ");
+  
   const query = `
-    INSERT INTO ${tableName} (${columns})
-    VALUES (${placeholders})
-    ON CONFLICT (${onConflictColumns})
-    DO NOTHING;
+    MERGE INTO ${tableName} AS target
+    USING (VALUES (${placeholders})) AS source (${columns})
+    ON ${onCondition}
+    WHEN MATCHED THEN
+      DO NOTHING
+    WHEN NOT MATCHED THEN
+      INSERT (${columns})
+      VALUES (${columns.split(", ").map((col) => `source.${col}`).join(", ")});
   `;
 
-  // Execute the query for each item
+  // Prepare the data for execution
   for (const data of dataList) {
-    const values = Object.values(data); // Pass raw values
+    const values = Object.keys(data).map((key) =>
+      key === 'trade_date' ? data[key] : data[key] // Pass `trade_date` as a raw string or `Date`
+    );
+
     try {
-      logger.debug('Executing INSERT query with conflict handling', { query, values });
+      logger.debug('Executing MERGE query', { query, values });
       await this.db.none(query, values);
     } catch (error) {
-      logger.error('Error executing INSERT query', { error, data });
+      logger.error('Error executing MERGE query', { error, data });
       throw error;
     }
   }
 
-  logger.info('Merge complete for all instruments (no action on conflict)');
+  logger.info('Merge complete for all instruments');
 }
 
 }
