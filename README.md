@@ -1356,12 +1356,11 @@ async batchInsertInstruments(instruments: any[]): Promise<void> {
 
 export default mapInstrumentsToColumns;
 
-
-To handle a list of instruments using the `MERGE` query dynamically, the logic needs to adapt to batch operations effectively. Here's how we can modify your `FactService` to process and upsert a list of instruments in a loop, ensuring each entry is inserted when not matched.
+Sure! I’ll break the `mergeInstruments` method from your `FactService` class into smaller, reusable functions for clarity and maintainability. Each function will handle a specific part of the logic, resulting in cleaner, more modular code. Here's the refactored version:
 
 ---
 
-### Updated `FactService` for a List of Instruments
+### Refactored `FactService` with Smaller Functions
 
 ```typescript
 import pgPromise from 'pg-promise';
@@ -1387,52 +1386,103 @@ class FactService {
     return this.db.any<T>(query, params);
   }
 
-  async mergeInstruments(tableName: string, dataList: Record<string, any>[], onColumns: string[]): Promise<void> {
-  if (!dataList.length) {
-    logger.info('No data to merge');
-    return;
+  // Split function to prepare column names for placeholders
+  private preparePlaceholders(
+    data: Record<string, any>,
+    specialFields: { dateFields: string[]; bitFields: string[]; timestampFields: string[] }
+  ): string {
+    const { dateFields, bitFields, timestampFields } = specialFields;
+
+    return Object.keys(data)
+      .map((key, index) => {
+        if (dateFields.includes(key)) {
+          return `$${index + 1}::DATE`;
+        } else if (bitFields.includes(key)) {
+          return `$${index + 1}::BIT(1)`;
+        } else if (timestampFields.includes(key)) {
+          return `$${index + 1}::TIMESTAMP`;
+        }
+        return `$${index + 1}`;
+      })
+      .join(', ');
   }
 
-  // Prepare the `MERGE` query
-  const firstEntry = dataList[0];
-  const columns = Object.keys(firstEntry).join(", ");
-  const placeholders = Object.keys(firstEntry).map((key, i) => {
-    // Cast `trade_date` to `::DATE` in SQL
-    return key === 'trade_date' ? `$${i + 1}::DATE` : `$${i + 1}`;
-  }).join(", ");
-  
-  // Dynamically create the ON condition
-  const onCondition = onColumns.map((col) => `target.${col} = source.${col}`).join(" AND ");
-  
-  const query = `
-    MERGE INTO ${tableName} AS target
-    USING (VALUES (${placeholders})) AS source (${columns})
-    ON ${onCondition}
-    WHEN MATCHED THEN
-      DO NOTHING
-    WHEN NOT MATCHED THEN
-      INSERT (${columns})
-      VALUES (${columns.split(", ").map((col) => `source.${col}`).join(", ")});
-  `;
+  // Split function to create ON condition dynamically
+  private prepareOnCondition(onColumns: string[]): string {
+    return onColumns.map((col) => `target.${col} = source.${col}`).join(' AND ');
+  }
 
-  // Prepare the data for execution
-  for (const data of dataList) {
-    const values = Object.keys(data).map((key) =>
-      key === 'trade_date' ? data[key] : data[key] // Pass `trade_date` as a raw string or `Date`
-    );
+  // Split function to preprocess data for special fields
+  private processData(
+    data: Record<string, any>,
+    specialFields: { dateFields: string[]; bitFields: string[]; timestampFields: string[] }
+  ): any[] {
+    const { dateFields, bitFields, timestampFields } = specialFields;
 
-    try {
-      logger.debug('Executing MERGE query', { query, values });
-      await this.db.none(query, values);
-    } catch (error) {
-      logger.error('Error executing MERGE query', { error, data });
-      throw error;
+    return Object.keys(data).map((key) => {
+      if (dateFields.includes(key)) {
+        return data[key] instanceof Date
+          ? (data[key] as Date).toISOString().split('T')[0] // Convert Date object to YYYY-MM-DD
+          : data[key];
+      } else if (bitFields.includes(key)) {
+        return data[key] === '0' || data[key] === '1' ? data[key] : '0'; // Validate BIT field
+      } else if (timestampFields.includes(key)) {
+        return data[key] instanceof Date
+          ? (data[key] as Date).toISOString() // Convert Date to full ISO timestamp
+          : data[key];
+      }
+      return data[key];
+    });
+  }
+
+  // Main mergeInstruments function orchestrating the smaller functions
+  async mergeInstruments(
+    tableName: string,
+    dataList: Record<string, any>[],
+    onColumns: string[],
+    specialFields: {
+      dateFields: string[];
+      bitFields: string[];
+      timestampFields: string[];
     }
+  ): Promise<void> {
+    if (!dataList.length) {
+      logger.info('No data to merge');
+      return;
+    }
+
+    // Prepare query components
+    const firstEntry = dataList[0];
+    const columns = Object.keys(firstEntry).join(', ');
+    const placeholders = this.preparePlaceholders(firstEntry, specialFields);
+    const onCondition = this.prepareOnCondition(onColumns);
+
+    const query = `
+      MERGE INTO ${tableName} AS target
+      USING (VALUES (${placeholders})) AS source (${columns})
+      ON ${onCondition}
+      WHEN MATCHED THEN
+        DO NOTHING
+      WHEN NOT MATCHED THEN
+        INSERT (${columns})
+        VALUES (${columns.split(', ').map((col) => `source.${col}`).join(', ')});
+    `;
+
+    // Execute the query for each row of data
+    for (const data of dataList) {
+      const values = this.processData(data, specialFields);
+
+      try {
+        logger.debug('Executing MERGE query', { query, values });
+        await this.db.none(query, values);
+      } catch (error) {
+        logger.error('Error executing MERGE query', { error, data });
+        throw error;
+      }
+    }
+
+    logger.info('Merge complete for all instruments');
   }
-
-  logger.info('Merge complete for all instruments');
-}
-
 }
 
 export default FactService;
@@ -1440,24 +1490,26 @@ export default FactService;
 
 ---
 
-### Explanation
-1. **Dynamic Query Handling**:
-   - The method `mergeInstruments` generates the `MERGE` query dynamically based on the object keys and `onColumns`.
+### Key Refactor Details
 
-2. **Batch Processing**:
-   - Each instrument is processed individually inside a loop to simplify conflict resolution and avoid row-wise inconsistency.
+1. **`preparePlaceholders`:**
+   - Generates placeholders for all columns dynamically.
+   - Handles type-specific placeholders for `dateFields`, `bitFields`, and `timestampFields`.
 
-3. **Reusability**:
-   - The method works for any table where the data object's keys match the column names.
+2. **`prepareOnCondition`:**
+   - Dynamically constructs the `ON` condition for the `MERGE` query using `onColumns`.
 
-4. **Error Isolation**:
-   - Logs and throws errors for specific instruments, allowing better debugging.
+3. **`processData`:**
+   - Handles special field processing for each row in `dataList`.
+   - Converts `DATE` and `TIMESTAMP` fields to appropriate formats and validates `BIT` fields.
+
+4. **Main `mergeInstruments`:**
+   - Orchestrates the query-building process by calling the smaller, focused functions.
+   - Executes the final query for each entry in `dataList`.
 
 ---
 
-### Example Usage in the Handler
-
-Here’s how you can use the updated `FactService` in your handler to process a list of instruments:
+### Example Handler with Special Fields
 
 ```typescript
 import FactService from './services/FactService';
@@ -1465,21 +1517,39 @@ import FactService from './services/FactService';
 const factService = new FactService();
 
 export const handler = async (event: any): Promise<any> => {
-  const { instruments } = event; // Assuming the list of instruments comes in the event payload
-  const onColumns = ["instrument_code", "commodity_code", "instrument_type"]; // Matching keys for the ON condition
+  const { instruments } = event;
+  const tableName = 'instruments';
+  const onColumns = ['instrument_code', 'commodity_code'];
+
+  const specialFields = {
+    dateFields: ['trade_date', 'another_date_field'],
+    bitFields: ['bit_field', 'another_bit_field'],
+    timestampFields: ['timestamp_field', 'another_timestamp_field'],
+  };
 
   try {
-    await factService.mergeInstruments("instruments", instruments, onColumns);
+    if (!instruments || !instruments.length) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'No data provided' }),
+      };
+    }
+
+    await factService.mergeInstruments(tableName, instruments, onColumns, specialFields);
 
     return {
       statusCode: 200,
-      body: JSON.stringify({ message: "Merge operation completed successfully" }),
+      body: JSON.stringify({ message: 'Merge operation completed successfully' }),
     };
   } catch (error) {
-    console.error("Error in handler:", error);
+    console.error('Error in handler:', error);
+
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: "Internal Server Error", details: error.message }),
+      body: JSON.stringify({
+        error: 'Internal Server Error',
+        details: error.message,
+      }),
     };
   }
 };
@@ -1487,40 +1557,12 @@ export const handler = async (event: any): Promise<any> => {
 
 ---
 
-### Assumptions
-- **Input Data Structure**:
-  Each `instrument` object in `instruments` has column names as keys, e.g.:
-  ```json
-  [
-    {
-      "instrument_code": "ABC123",
-      "commodity_code": "GOLD",
-      "instrument_type": "FUTURE",
-      "first_trading_date": "2025-03-22",
-      "last_trading_date": "2025-12-31",
-      "priority": 1,
-      "sequence_number": 100
-    },
-    {
-      "instrument_code": "DEF456",
-      "commodity_code": "SILVER",
-      "instrument_type": "OPTION",
-      "first_trading_date": "2025-04-01",
-      "last_trading_date": "2025-12-30",
-      "priority": 2,
-      "sequence_number": 200
-    }
-  ]
-  ```
+### Advantages of the Refactor
+1. **Smaller, Modular Functions:**
+   - Each function handles a specific part of the logic, making the code more readable and maintainable.
+2. **Generic Handling:**
+   - Can be easily extended to handle other special field types in the future.
+3. **Cleaner Orchestration:**
+   - The `mergeInstruments` function is now focused on orchestrating the smaller reusable functions.
 
----
-
-### Advantages of the Approach
-1. **Dynamic Support for Lists**:
-   - Handles any list of instruments with matching column names.
-2. **Error Logging**:
-   - Captures errors for individual entries, avoiding full operation failure.
-3. **Maintainability**:
-   - Reusable for different tables by modifying `tableName` and `onColumns`.
-
-Would you like further optimization or a deeper dive into bulk handling? Let me know!
+This refactor makes it easy to test individual components and apply further improvements without affecting the entire structure. Let me know if you'd like any further customizations!
