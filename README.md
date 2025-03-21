@@ -1751,3 +1751,227 @@ export default FactService;
 
 ### Recommendation
 Removing `processData` simplifies the design but sacrifices scalability and maintainability. If you anticipate handling multiple field types or using similar logic for other operations, I recommend keeping the `processData` function for centralization and clarity. Let me know how you'd like to proceed!
+
+
+Here’s a well-structured implementation of the `FactService` and handler that adheres to **SOLID principles** and promotes clean architecture. The code embraces modular design, dependency injection, and pure functions wherever applicable for TypeScript best practices.
+
+---
+
+### `FactService`
+
+```typescript
+import pgPromise, { IDatabase } from 'pg-promise';
+import { ILogger } from '../logger';
+
+interface SpecialFields {
+  dateFields: string[];
+  bitFields: string[];
+  timestampFields: string[];
+  timeFields: string[];
+  uuidFields: string[];
+  numericFields: string[];
+}
+
+class FactService {
+  private db: IDatabase<any>;
+  private logger: ILogger;
+
+  constructor(db: IDatabase<any>, logger: ILogger) {
+    this.db = db;
+    this.logger = logger;
+  }
+
+  /**
+   * Fetch data with a generic query
+   * @param query SQL query string
+   * @param params Query parameters
+   */
+  async fetchData<T>(query: string, params: any[] = []): Promise<T[]> {
+    this.logger.debug('Fetching data', { query, params });
+    return this.db.any<T>(query, params);
+  }
+
+  /**
+   * Prepare placeholders dynamically for SQL query
+   * @param data Single row of data
+   * @param fieldTypes Field type mappings
+   */
+  preparePlaceholders(data: Record<string, any>, fieldTypes: SpecialFields): string {
+    const { dateFields, bitFields, timestampFields, timeFields, uuidFields, numericFields } = fieldTypes;
+
+    return Object.keys(data)
+      .map((field, index) => {
+        if (dateFields.includes(field)) return `$${index + 1}::DATE`;
+        if (bitFields.includes(field)) return `$${index + 1}::BIT(1)`;
+        if (timestampFields.includes(field)) return `$${index + 1}::TIMESTAMP`;
+        if (timeFields.includes(field)) return `$${index + 1}::TIME`;
+        if (uuidFields.includes(field)) return `$${index + 1}::UUID`;
+        if (numericFields.includes(field)) return `$${index + 1}::NUMERIC(2,2)`;
+        return `$${index + 1}`;
+      })
+      .join(', ');
+  }
+
+  /**
+   * Prepare ON condition for conflict resolution in MERGE query
+   * @param uniqueColumns Array of columns used for conflict detection
+   */
+  prepareOnCondition(uniqueColumns: string[]): string {
+    return uniqueColumns.map((column) => `target.${column} = source.${column}`).join(' AND ');
+  }
+
+  /**
+   * Execute a MERGE operation with dynamically generated query
+   * @param tableName Target table name
+   * @param dataList List of rows to merge
+   * @param uniqueColumns Conflict resolution columns
+   * @param fieldTypes Special field type mappings
+   */
+  async mergeRecords(
+    tableName: string,
+    dataList: Record<string, any>[],
+    uniqueColumns: string[],
+    fieldTypes: SpecialFields
+  ): Promise<void> {
+    if (!dataList.length) {
+      this.logger.info('No data to merge');
+      return;
+    }
+
+    const firstRow = dataList[0];
+    const columns = Object.keys(firstRow).join(', ');
+    const placeholders = this.preparePlaceholders(firstRow, fieldTypes);
+    const onCondition = this.prepareOnCondition(uniqueColumns);
+
+    const query = `
+      MERGE INTO ${tableName} AS target
+      USING (VALUES (${placeholders})) AS source (${columns})
+      ON ${onCondition}
+      WHEN MATCHED THEN
+        DO NOTHING
+      WHEN NOT MATCHED THEN
+        INSERT (${columns})
+        VALUES (${columns.split(', ').map((col) => `source.${col}`).join(', ')});
+    `;
+
+    for (const row of dataList) {
+      const values = Object.values(row); // Use values directly
+      try {
+        this.logger.debug('Executing MERGE query', { query, values });
+        await this.db.none(query, values);
+      } catch (error) {
+        this.logger.error('Error executing MERGE query', { error, row });
+        throw error;
+      }
+    }
+
+    this.logger.info('Merge operation completed successfully');
+  }
+}
+
+export default FactService;
+```
+
+---
+
+### Handler
+
+The handler ensures separation of concerns by delegating the merging logic to the `FactService` and passing all dependencies via constructor injection.
+
+```typescript
+import FactService from './services/FactService';
+import pgPromise from 'pg-promise';
+import logger from './logger'; // Assume logger implements ILogger interface
+
+export const handler = async (event: any): Promise<any> => {
+  const { instruments } = event;
+
+  if (!instruments || !instruments.length) {
+    return {
+      statusCode: 400,
+      body: JSON.stringify({ error: 'No data provided' }),
+    };
+  }
+
+  const pgp = pgPromise();
+  const db = pgp({
+    host: process.env.RDS_HOST,
+    port: parseInt(process.env.RDS_PORT, 10),
+    user: process.env.RDS_USER,
+    password: process.env.RDS_PASSWORD,
+    database: process.env.RDS_DATABASE,
+  });
+
+  const factService = new FactService(db, logger);
+
+  // Special fields requiring type-specific handling
+  const fieldTypes = {
+    dateFields: ['trade_date', 'another_date_field'],
+    bitFields: ['bit_field', 'another_bit_field'],
+    timestampFields: ['timestamp_field', 'another_timestamp_field'],
+    timeFields: ['start_time', 'end_time'], // TIME WITHOUT TIME ZONE fields
+    uuidFields: ['uuid_field', 'another_uuid_field'],
+    numericFields: ['numeric_field', 'another_numeric_field'],
+  };
+
+  try {
+    // Call FactService to perform merge operation
+    const tableName = 'instruments';
+    const uniqueColumns = ['instrument_code', 'commodity_code'];
+
+    await factService.mergeRecords(tableName, instruments, uniqueColumns, fieldTypes);
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ message: 'Merge operation completed successfully' }),
+    };
+  } catch (error) {
+    logger.error('Handler Error', { error });
+
+    return {
+      statusCode: 500,
+      body: JSON.stringify({
+        error: 'Internal Server Error',
+        details: error.message,
+      }),
+    };
+  }
+};
+```
+
+---
+
+### SOLID Principles Applied
+
+1. **Single Responsibility Principle (SRP):**
+   - `FactService` handles all database-related logic (query generation and execution).
+   - The handler focuses solely on handling HTTP requests and delegating business logic.
+
+2. **Open-Closed Principle (OCP):**
+   - The `FactService` can be extended to handle additional field types without modifying core logic, thanks to the `fieldTypes` mapping.
+
+3. **Liskov Substitution Principle (LSP):**
+   - The design ensures that `FactService` can be used as a substitute for similar services that adhere to the same interface or structure.
+
+4. **Interface Segregation Principle (ISP):**
+   - The `ILogger` interface defines specific logging operations, ensuring that the `FactService` doesn’t depend on unnecessary functionality.
+
+5. **Dependency Inversion Principle (DIP):**
+   - The `FactService` and handler depend on abstractions (`ILogger` for logging and `IDatabase` for database operations), promoting flexibility.
+
+---
+
+### Benefits of This Design
+1. **Modular and Clean:**
+   - Each class and method is focused on a single responsibility, making the code easier to maintain and extend.
+
+2. **Reusable Logic:**
+   - `FactService` can be reused across multiple handlers or projects with minimal changes.
+
+3. **Pure Functions:**
+   - Functions like `preparePlaceholders` and `prepareOnCondition` are pure and don't have any side effects.
+
+4. **TypeScript Best Practices:**
+   - Explicit interfaces and type annotations ensure clarity and safety in the codebase.
+
+Let me know if you'd like further refinements or details!
