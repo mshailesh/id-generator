@@ -1387,43 +1387,45 @@ class FactService {
     return this.db.any<T>(query, params);
   }
 
-  // Execute dynamic MERGE for a list of instruments
   async mergeInstruments(tableName: string, dataList: Record<string, any>[], onColumns: string[]): Promise<void> {
-    const firstEntry = dataList[0];
-    if (!firstEntry) {
-      logger.info('No data to merge');
-      return;
-    }
-
-    // Prepare columns and dynamic ON condition
-    const columns = Object.keys(firstEntry).join(", ");
-    const valuesPlaceholder = Object.keys(firstEntry).map((_, i) => `$${i + 1}`).join(", ");
-    const onCondition = onColumns.map((col) => `target.${col} = source.${col}`).join(" AND ");
-
-    // Prepare the MERGE query
-    const mergeQuery = `
-      MERGE INTO ${tableName} AS target
-      USING (VALUES (${valuesPlaceholder})) AS source (${columns})
-      ON ${onCondition}
-      WHEN NOT MATCHED THEN
-        INSERT (${columns})
-        VALUES (${valuesPlaceholder});
-    `;
-
-    // Execute the MERGE query for each item
-    for (const data of dataList) {
-      const values = Object.values(data);
-      try {
-        logger.debug('Executing MERGE query for instrument', { mergeQuery, values });
-        await this.db.none(mergeQuery, values);
-      } catch (error) {
-        logger.error('Error executing MERGE query for instrument', { error, data });
-        throw error;
-      }
-    }
-
-    logger.info('Merge complete for all instruments');
+  const firstEntry = dataList[0];
+  if (!firstEntry) {
+    logger.info('No data to merge');
+    return;
   }
+
+  // Prepare columns and placeholders for INSERT
+  const columns = Object.keys(firstEntry).join(", ");
+  const placeholders = Object.keys(firstEntry).map((key, i) => {
+    // NOTE: Using ::DATE for trade_date to ensure proper type casting in PostgreSQL.
+    // There is currently no better way to achieve this at the SQL level directly while keeping logic clean.
+    return key === 'trade_date' ? `$${i + 1}::DATE` : `$${i + 1}`;
+  }).join(", ");
+
+  // Prepare the ON CONFLICT clause
+  const onConflictColumns = onColumns.join(", ");
+  const query = `
+    INSERT INTO ${tableName} (${columns})
+    VALUES (${placeholders})
+    ON CONFLICT (${onConflictColumns})
+    DO NOTHING;
+  `;
+
+  // Execute the query for each item
+  for (const data of dataList) {
+    const values = Object.values(data); // Pass raw values
+    try {
+      logger.debug('Executing INSERT query with conflict handling', { query, values });
+      await this.db.none(query, values);
+    } catch (error) {
+      logger.error('Error executing INSERT query', { error, data });
+      throw error;
+    }
+  }
+
+  logger.info('Merge complete for all instruments (no action on conflict)');
+}
+
 }
 
 export default FactService;
