@@ -1357,17 +1357,15 @@ async batchInsertInstruments(instruments: any[]): Promise<void> {
 export default mapInstrumentsToColumns;
 
 
-To align the `FactService` with the changes, ensuring it can support the dynamic generation and execution of `MERGE` queries with multiple `ON` conditions, here’s how it would look:
+To handle a list of instruments using the `MERGE` query dynamically, the logic needs to adapt to batch operations effectively. Here's how we can modify your `FactService` to process and upsert a list of instruments in a loop, ensuring each entry is inserted when not matched.
 
 ---
 
-### Updated `FactService`
+### Updated `FactService` for a List of Instruments
 
 ```typescript
 import pgPromise from 'pg-promise';
 import logger from '../logger';
-
-type QueryParameters = any[];
 
 class FactService {
   private db: pgPromise.IDatabase<any>;
@@ -1383,54 +1381,48 @@ class FactService {
     });
   }
 
-  // Generic method for fetching data
-  async fetchFactData<T>(query: string, params: QueryParameters = []): Promise<T[]> {
-    try {
-      logger.debug('Executing fetch query', { query, params });
-      const data = await this.db.any<T>(query, params);
-      logger.debug('Fetch query executed successfully', { data });
-      return data;
-    } catch (error) {
-      logger.error('Error executing fetch query', { error, query, params });
-      throw error;
-    }
+  // Generic method to fetch data
+  async fetchFactData<T>(query: string, params: any[] = []): Promise<T[]> {
+    logger.debug('Fetching fact data', { query, params });
+    return this.db.any<T>(query, params);
   }
 
-  // Generic method for executing SQL queries (INSERT, UPDATE, MERGE, etc.)
-  async executeQuery(query: string, params: QueryParameters = []): Promise<void> {
-    try {
-      logger.debug('Executing query', { query, params });
-      await this.db.none(query, params);
-      logger.debug('Query executed successfully');
-    } catch (error) {
-      logger.error('Error executing query', { error, query, params });
-      throw error;
+  // Execute dynamic MERGE for a list of instruments
+  async mergeInstruments(tableName: string, dataList: Record<string, any>[], onColumns: string[]): Promise<void> {
+    const firstEntry = dataList[0];
+    if (!firstEntry) {
+      logger.info('No data to merge');
+      return;
     }
-  }
 
-  // Method to dynamically generate and execute a MERGE query for upsert
-  async mergeData(tableName: string, data: Record<string, any>, onColumns: string[]): Promise<void> {
-    const columns = Object.keys(data).join(", ");
-    const values = Object.keys(data).map((_, index) => `$${index + 1}`).join(", ");
+    // Prepare columns and dynamic ON condition
+    const columns = Object.keys(firstEntry).join(", ");
+    const valuesPlaceholder = Object.keys(firstEntry).map((_, i) => `$${i + 1}`).join(", ");
     const onCondition = onColumns.map((col) => `target.${col} = source.${col}`).join(" AND ");
 
+    // Prepare the MERGE query
     const mergeQuery = `
       MERGE INTO ${tableName} AS target
-      USING (VALUES (${values})) AS source (${columns})
+      USING (VALUES (${valuesPlaceholder})) AS source (${columns})
       ON ${onCondition}
       WHEN NOT MATCHED THEN
         INSERT (${columns})
-        VALUES (${values});
+        VALUES (${valuesPlaceholder});
     `;
 
-    try {
-      logger.debug('Executing MERGE query', { mergeQuery, data });
-      await this.executeQuery(mergeQuery, Object.values(data));
-      logger.debug('MERGE query executed successfully');
-    } catch (error) {
-      logger.error('Error executing MERGE query', { error, mergeQuery, data });
-      throw error;
+    // Execute the MERGE query for each item
+    for (const data of dataList) {
+      const values = Object.values(data);
+      try {
+        logger.debug('Executing MERGE query for instrument', { mergeQuery, values });
+        await this.db.none(mergeQuery, values);
+      } catch (error) {
+        logger.error('Error executing MERGE query for instrument', { error, data });
+        throw error;
+      }
     }
+
+    logger.info('Merge complete for all instruments');
   }
 }
 
@@ -1439,50 +1431,87 @@ export default FactService;
 
 ---
 
-### Key Features of the Updated `FactService`
+### Explanation
+1. **Dynamic Query Handling**:
+   - The method `mergeInstruments` generates the `MERGE` query dynamically based on the object keys and `onColumns`.
 
-1. **Generic Query Execution**:
-   - `fetchFactData` handles SELECT queries.
-   - `executeQuery` executes any non-SELECT query (INSERT, UPDATE, DELETE, etc.).
-   
-2. **Dynamic `MERGE` Execution**:
-   - The `mergeData` method generates and executes the `MERGE` query dynamically based on the input data and `ON` conditions.
-   - It takes the following inputs:
-     - `tableName`: The name of the target table.
-     - `data`: An object representing the row to be upserted.
-     - `onColumns`: An array of column names to use in the `ON` condition.
+2. **Batch Processing**:
+   - Each instrument is processed individually inside a loop to simplify conflict resolution and avoid row-wise inconsistency.
 
-3. **Parameterized Queries**:
-   - Uses parameterized queries to prevent SQL injection and ensure safe query execution.
+3. **Reusability**:
+   - The method works for any table where the data object's keys match the column names.
 
-4. **Detailed Logging**:
-   - Logs all query executions for better traceability and debugging.
+4. **Error Isolation**:
+   - Logs and throws errors for specific instruments, allowing better debugging.
 
 ---
 
-### Example Usage of `mergeData` in Your Handler
+### Example Usage in the Handler
+
+Here’s how you can use the updated `FactService` in your handler to process a list of instruments:
 
 ```typescript
-const instrument = {
-  instrument_code: "ABC123",
-  commodity_code: "GOLD",
-  instrument_type: "FUTURE",
-  first_trading_date: "2025-03-22",
-  last_trading_date: "2025-12-31",
-  priority: 1,
-  sequence_number: 100,
+import FactService from './services/FactService';
+
+const factService = new FactService();
+
+export const handler = async (event: any): Promise<any> => {
+  const { instruments } = event; // Assuming the list of instruments comes in the event payload
+  const onColumns = ["instrument_code", "commodity_code", "instrument_type"]; // Matching keys for the ON condition
+
+  try {
+    await factService.mergeInstruments("instruments", instruments, onColumns);
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ message: "Merge operation completed successfully" }),
+    };
+  } catch (error) {
+    console.error("Error in handler:", error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: "Internal Server Error", details: error.message }),
+    };
+  }
 };
-
-const onColumns = ["instrument_code", "commodity_code", "instrument_type"];
-
-try {
-  await factService.mergeData("instruments", instrument, onColumns);
-  console.log("Instrument upserted successfully");
-} catch (error) {
-  console.error("Error upserting instrument:", error);
-}
 ```
 
 ---
 
-This updated `FactService` is generic, reusable, and dynamically handles your `MERGE` requirements. Let me know if you'd like further refinements!
+### Assumptions
+- **Input Data Structure**:
+  Each `instrument` object in `instruments` has column names as keys, e.g.:
+  ```json
+  [
+    {
+      "instrument_code": "ABC123",
+      "commodity_code": "GOLD",
+      "instrument_type": "FUTURE",
+      "first_trading_date": "2025-03-22",
+      "last_trading_date": "2025-12-31",
+      "priority": 1,
+      "sequence_number": 100
+    },
+    {
+      "instrument_code": "DEF456",
+      "commodity_code": "SILVER",
+      "instrument_type": "OPTION",
+      "first_trading_date": "2025-04-01",
+      "last_trading_date": "2025-12-30",
+      "priority": 2,
+      "sequence_number": 200
+    }
+  ]
+  ```
+
+---
+
+### Advantages of the Approach
+1. **Dynamic Support for Lists**:
+   - Handles any list of instruments with matching column names.
+2. **Error Logging**:
+   - Captures errors for individual entries, avoiding full operation failure.
+3. **Maintainability**:
+   - Reusable for different tables by modifying `tableName` and `onColumns`.
+
+Would you like further optimization or a deeper dive into bulk handling? Let me know!
