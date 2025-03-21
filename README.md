@@ -1566,3 +1566,188 @@ export const handler = async (event: any): Promise<any> => {
    - The `mergeInstruments` function is now focused on orchestrating the smaller reusable functions.
 
 This refactor makes it easy to test individual components and apply further improvements without affecting the entire structure. Let me know if you'd like any further customizations!
+
+
+
+If we remove the `processData` function, we would lose the centralized logic for validating and formatting specific fields like `DATE`, `TIMESTAMP`, `UUID`, `NUMERIC`, and `BIT`. This means that all type handling and preprocessing would need to happen inline within the loop where we prepare `values` for each row of `dataList`. This can lead to cluttered and less readable code, as well as duplicate logic.
+
+Let me show you how the code would look **without `processData`**, keeping things clean but sacrificing the benefits of centralized data handling.
+
+---
+
+### Refactored Code Without `processData`
+
+```typescript
+import pgPromise from 'pg-promise';
+import logger from '../logger';
+
+class FactService {
+  private db: pgPromise.IDatabase<any>;
+
+  constructor() {
+    const pgp = pgPromise();
+    this.db = pgp({
+      host: process.env.RDS_HOST,
+      port: parseInt(process.env.RDS_PORT, 10),
+      user: process.env.RDS_USER,
+      password: process.env.RDS_PASSWORD,
+      database: process.env.RDS_DATABASE,
+    });
+  }
+
+  // Fetch data using a generic query
+  async fetchFactData<T>(query: string, params: any[] = []): Promise<T[]> {
+    logger.debug('Fetching data', { query, params });
+    return this.db.any<T>(query, params);
+  }
+
+  // Prepare placeholders for dynamic query generation
+  private preparePlaceholders(
+    data: Record<string, any>,
+    fieldTypes: {
+      dateFields: string[];
+      bitFields: string[];
+      timestampFields: string[];
+      uuidFields: string[];
+      numericFields: string[];
+    }
+  ): string {
+    const { dateFields, bitFields, timestampFields, uuidFields, numericFields } = fieldTypes;
+
+    return Object.keys(data)
+      .map((field, index) => {
+        if (dateFields.includes(field)) return `$${index + 1}::DATE`;
+        if (bitFields.includes(field)) return `$${index + 1}::BIT(1)`;
+        if (timestampFields.includes(field)) return `$${index + 1}::TIMESTAMP`;
+        if (uuidFields.includes(field)) return `$${index + 1}::UUID`;
+        if (numericFields.includes(field)) return `$${index + 1}::NUMERIC(2,2)`;
+        return `$${index + 1}`;
+      })
+      .join(', ');
+  }
+
+  // Create the ON condition for conflict resolution
+  private prepareOnCondition(uniqueColumns: string[]): string {
+    return uniqueColumns.map((column) => `target.${column} = source.${column}`).join(' AND ');
+  }
+
+  // Main mergeInstruments function without processData
+  async mergeInstruments(
+    tableName: string,
+    dataList: Record<string, any>[],
+    uniqueColumns: string[],
+    fieldTypes: {
+      dateFields: string[];
+      bitFields: string[];
+      timestampFields: string[];
+      uuidFields: string[];
+      numericFields: string[];
+    }
+  ): Promise<void> {
+    if (!dataList.length) {
+      logger.info('No data to merge');
+      return;
+    }
+
+    // Prepare query components
+    const firstRow = dataList[0];
+    const columns = Object.keys(firstRow).join(', ');
+    const placeholders = this.preparePlaceholders(firstRow, fieldTypes);
+    const onCondition = this.prepareOnCondition(uniqueColumns);
+
+    const query = `
+      MERGE INTO ${tableName} AS target
+      USING (VALUES (${placeholders})) AS source (${columns})
+      ON ${onCondition}
+      WHEN MATCHED THEN
+        DO NOTHING
+      WHEN NOT MATCHED THEN
+        INSERT (${columns})
+        VALUES (${columns.split(', ').map((col) => `source.${col}`).join(', ')});
+    `;
+
+    // Inline data processing instead of processData
+    for (const row of dataList) {
+      const values = Object.keys(row).map((field) => {
+        if (fieldTypes.dateFields.includes(field)) {
+          // Convert DATE fields to YYYY-MM-DD
+          return row[field] instanceof Date
+            ? (row[field] as Date).toISOString().split('T')[0]
+            : row[field];
+        }
+
+        if (fieldTypes.bitFields.includes(field)) {
+          // Validate BIT fields (0 or 1)
+          return row[field] === '0' || row[field] === '1' ? row[field] : '0';
+        }
+
+        if (fieldTypes.timestampFields.includes(field)) {
+          // Convert TIMESTAMP fields to ISO format
+          return row[field] instanceof Date ? (row[field] as Date).toISOString() : row[field];
+        }
+
+        if (fieldTypes.uuidFields.includes(field)) {
+          // Validate UUID format
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          return uuidRegex.test(row[field]) ? row[field] : null;
+        }
+
+        if (fieldTypes.numericFields.includes(field)) {
+          // Ensure precision for NUMERIC(2,2)
+          return parseFloat(row[field]).toFixed(2);
+        }
+
+        return row[field]; // Default for other fields
+      });
+
+      try {
+        logger.debug('Executing MERGE query', { query, values });
+        await this.db.none(query, values);
+      } catch (error) {
+        logger.error('Error executing MERGE query', { error, row });
+        throw error;
+      }
+    }
+
+    logger.info('Merge operation completed successfully');
+  }
+}
+
+export default FactService;
+```
+
+---
+
+### Key Changes Without `processData`
+1. **Inline Field Processing:**
+   - The logic for handling `DATE`, `BIT`, `TIMESTAMP`, `UUID`, and `NUMERIC(2,2)` fields is directly included within the loop for processing `values`.
+
+2. **Simplified Functionality:**
+   - Removed `processData` entirely, making the validation logic embedded within the `mergeInstruments` loop.
+
+3. **Loss of Centralization:**
+   - The field-specific handling logic is now fragmented, making it harder to reuse or update. For example, adding a new field type would require modifying this loop.
+
+---
+
+### Pros Without `processData`
+- **Simpler Code for Small Use Cases:**
+  - Inline logic avoids the need for an additional function.
+  - Useful for straightforward datasets with few special fields.
+
+---
+
+### Cons Without `processData`
+- **Harder to Reuse:**
+  - The logic is embedded within `mergeInstruments`, meaning it can't be reused for other methods or tables.
+
+- **Less Readable:**
+  - Processing logic for different fields is scattered, reducing readability and maintainability.
+
+- **Difficult to Extend:**
+  - Adding support for new field types requires modifying the loop every time, risking duplication of code.
+
+---
+
+### Recommendation
+Removing `processData` simplifies the design but sacrifices scalability and maintainability. If you anticipate handling multiple field types or using similar logic for other operations, I recommend keeping the `processData` function for centralization and clarity. Let me know how you'd like to proceed!
