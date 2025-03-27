@@ -1975,3 +1975,229 @@ export const handler = async (event: any): Promise<any> => {
    - Explicit interfaces and type annotations ensure clarity and safety in the codebase.
 
 Let me know if you'd like further refinements or details!
+
+
+
+
+# Rule Engine Wrapper Documentation
+
+## Overview
+
+The `RuleEngineWrapper` provides a simplified interface for working with rules, facts, and data storage by combining three core services:
+- `FactService` - For fetching data from a PostgreSQL database
+- `RuleService` - For evaluating business rules using json-rules-engine
+- `S3Service` - For retrieving rule definitions from S3
+
+## Installation
+
+```bash
+npm install your-package-name
+```
+
+## Initialization
+
+```typescript
+import RuleEngineWrapper from 'your-package-name';
+
+// Initialize the wrapper (it will automatically initialize all underlying services)
+const ruleEngine = new RuleEngineWrapper();
+```
+
+## Core Methods
+
+### 1. Fetching Data (FactService)
+
+#### `fetchFactData(query: string): Promise<T[]>`
+
+Fetches data from the database using the provided SQL query.
+
+**Example:**
+```typescript
+// Fetch market segments
+const marketSegments = await ruleEngine.fetchFactData<MarketSegment>(
+  `SELECT market_segment_code, calendar_id 
+   FROM market_segment 
+   WHERE start_date <= NOW() AND end_date >= NOW()`
+);
+
+console.log(marketSegments);
+// Output: [{ market_segment_code: 'NYMEX', calendar_id: 1 }, ...]
+```
+
+### 2. Evaluating Rules (RuleService)
+
+#### `evaluateRules(rules: Rule[], dynamicFacts: Record<string, DynamicFact>): Promise<Event[]>`
+
+Evaluates a set of rules against dynamic facts.
+
+**Example:**
+```typescript
+import { Rule } from 'json-rules-engine';
+
+// Define rules
+const rules = [
+  new Rule({
+    conditions: {
+      all: [{
+        fact: 'marketSegments',
+        operator: 'greaterThan',
+        value: 0,
+        path: '$.length'
+      }]
+    },
+    event: {
+      type: 'marketSegmentsAvailable',
+      params: { message: 'Market segments found' }
+    }
+  })
+];
+
+// Define dynamic facts
+const dynamicFacts = {
+  marketSegments: async () => {
+    return await ruleEngine.fetchFactData(
+      `SELECT market_segment_code FROM market_segment`
+    );
+  }
+};
+
+// Evaluate rules
+const results = await ruleEngine.evaluateRules(rules, dynamicFacts);
+
+console.log(results);
+// Output: [{ type: 'marketSegmentsAvailable', params: { message: 'Market segments found' } }]
+```
+
+### 3. Fetching Rules from S3 (S3Service)
+
+#### `fetchRulesFromS3<T>(bucket: string, key: string): Promise<T>`
+
+Retrieves rule definitions from an S3 bucket.
+
+**Example:**
+```typescript
+// Fetch rules from S3
+const rules = await ruleEngine.fetchRulesFromS3<Rule[]>(
+  'my-rules-bucket',
+  'path/to/rules.json'
+);
+
+console.log(rules);
+// Output: [ { conditions: { all: [...] }, event: { type: '...' } }, ... ]
+```
+
+## Complete Usage Example
+
+Here's a complete example showing how to use all three services together:
+
+```typescript
+import RuleEngineWrapper from 'your-package-name';
+import { Rule } from 'json-rules-engine';
+
+async function runRuleEngine() {
+  const ruleEngine = new RuleEngineWrapper();
+  
+  try {
+    // 1. Fetch rules from S3
+    const rules = await ruleEngine.fetchRulesFromS3<Rule[]>(
+      'production-rules-bucket',
+      'trading-rules/2023-10.json'
+    );
+    
+    // 2. Define dynamic facts that will be evaluated against the rules
+    const dynamicFacts = {
+      marketSegments: async () => {
+        return await ruleEngine.fetchFactData(
+          `SELECT market_segment_code, calendar_id 
+           FROM market_segment 
+           WHERE start_date <= NOW() AND end_date >= NOW()`
+        );
+      },
+      nextTradingDate: async (params: any, almanac: any) => {
+        const segments = await almanac.factValue('marketSegments');
+        const dates = await Promise.all(
+          segments.map((segment: any) => 
+            ruleEngine.fetchFactData(
+              `SELECT MIN(trade_date) AS next_trade_date 
+               FROM calendar 
+               WHERE calendar_id = $1 
+                 AND trade_date > NOW() 
+                 AND trade_date_indicator = 'Y'`,
+              [segment.calendar_id]
+            )
+          );
+        return dates.flat();
+      }
+    };
+    
+    // 3. Evaluate the rules
+    const results = await ruleEngine.evaluateRules(rules, dynamicFacts);
+    
+    console.log('Rule evaluation results:', results);
+    return results;
+    
+  } catch (error) {
+    console.error('Error in rule engine execution:', error);
+    throw error;
+  }
+}
+
+runRuleEngine();
+```
+
+## Error Handling
+
+The wrapper will propagate errors from the underlying services. Always wrap calls in try/catch blocks:
+
+```typescript
+try {
+  const data = await ruleEngine.fetchFactData('SELECT...');
+  // ... other operations
+} catch (error) {
+  console.error('Failed to execute rule engine operation:', error);
+  // Handle error appropriately
+}
+```
+
+## Configuration
+
+The wrapper uses environment variables for configuration. Ensure these are set before initialization:
+
+```bash
+# Database (FactService)
+RDS_HOST=your-db-host
+RDS_PORT=5432
+RDS_USER=your-db-user
+RDS_PASSWORD=your-db-password
+RDS_DATABASE=your-db-name
+
+# S3 (S3Service)
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+AWS_REGION=us-east-1
+S3_ENDPOINT= # Optional for non-AWS S3
+FORCE_PATH_STYLE=false # Set to true for localstack/minio
+```
+
+## Best Practices
+
+1. **Reuse the wrapper instance** - Creating multiple instances is expensive
+2. **Cache rules** - Fetch rules once at startup if they don't change often
+3. **Keep queries simple** - Complex queries should be in stored procedures
+4. **Monitor performance** - Large fact sets or complex rules can impact performance
+
+## TypeScript Support
+
+The wrapper is fully typed. You can provide type parameters for better type safety:
+
+```typescript
+interface MarketSegment {
+  market_segment_code: string;
+  calendar_id: number;
+}
+
+const segments = await ruleEngine.fetchFactData<MarketSegment>(
+  'SELECT market_segment_code, calendar_id FROM market_segment'
+);
+// segments is now typed as MarketSegment[]
+```
