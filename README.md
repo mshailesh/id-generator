@@ -2201,3 +2201,30 @@ const segments = await ruleEngine.fetchFactData<MarketSegment>(
 );
 // segments is now typed as MarketSegment[]
 ```
+
+
+1. insertProcessedData<T>(query: string, values: T[]): Promise<T[]>
+Executes a parameterized query to insert processed data into the database. This is ideal for bulk inserts or when you need precise control over the SQL statement.
+
+Parameters:
+query: Complete SQL query string with placeholders ($1, $2, etc.)
+
+values: Array of values to be inserted (type-safe)
+
+Returns:
+Promise resolving to the inserted rows with their database-generated fields (like IDs)
+
+// Insert processed instruments
+const result = await ruleEngine.insertProcessedData<Instrument>(
+  `INSERT INTO processed_instruments 
+   (instrument_code, trade_date, price) 
+   VALUES ($1, $2, $3) 
+   RETURNING *`,
+  [
+    { instrument_code: 'CLZ23', trade_date: '2023-12-01', price: 75.42 },
+    { instrument_code: 'HGZ23', trade_date: '2023-12-15', price: 3.85 }
+  ]
+);
+
+console.log('Inserted:', result);
+// Output: [{ id: 1, instrument_code: 'CLZ23', ...}, ...]
