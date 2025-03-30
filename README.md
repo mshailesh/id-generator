@@ -2228,3 +2228,69 @@ const result = await ruleEngine.insertProcessedData<Instrument>(
 
 console.log('Inserted:', result);
 // Output: [{ id: 1, instrument_code: 'CLZ23', ...}, ...]
+
+
+
+# AWS Credentials
+AWS_ACCESS_KEY_ID=your_aws_access_key_id
+AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
+AWS_REGION=your_aws_region
+
+# S3 Configuration
+S3_BUCKET=your_s3_bucket_name
+S3_KEYS=key1.json,key2.json,key3.json
+
+# Database Configuration
+RDS_HOST=your_rds_host
+RDS_PORT=your_rds_port
+RDS_USER=your_rds_username
+RDS_PASSWORD=your_rds_password
+RDS_DATABASE=your_rds_database_name
+
+
+import { RuleEngineWrapper } from './services/RuleEngineWrapper';
+import logger from './utils/logger';
+
+const ruleEngineWrapper = new RuleEngineWrapper();
+
+export const handler = async (event: any): Promise<any> => {
+  try {
+    // Step 1: Load bucket and keys from environment variables
+    const bucket = process.env.S3_BUCKET!;
+    const keys = process.env.S3_KEYS ? process.env.S3_KEYS.split(',') : [];
+    if (!bucket || keys.length === 0) {
+      throw new Error('S3_BUCKET and S3_KEYS environment variables must be defined');
+    }
+
+    logger.info('Fetching rules from S3', { bucket, keys });
+
+    // Step 2: Fetch rules for each key in parallel
+    const rulesPromises = keys.map(async (key) => {
+      const ruleJson = await ruleEngineWrapper.fetchRulesFromS3(bucket, key);
+      return { key, ruleJson }; // Create tuple/record with key and JSON file
+    });
+
+    const rules = await Promise.all(rulesPromises);
+
+    logger.info('Rules fetched successfully', { rules });
+
+    // Step 3: Pass rules into InstrumentProcessor
+    const instrumentProcessor = new InstrumentProcessor(rules); // Assuming `InstrumentProcessor` accepts rules
+    const instruments = await loadInstruments(); // Fetch instruments using InstrumentLoader
+    const processedInstruments = await instrumentProcessor.processInstruments(instruments);
+
+    logger.info('Instrument processing completed', { processedInstruments });
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ message: 'Processing completed successfully', processedInstruments }),
+    };
+  } catch (error) {
+    logger.error('Error in handler', { error });
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: 'Internal Server Error', details: error.message }),
+    };
+  }
+};
+
