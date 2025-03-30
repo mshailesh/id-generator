@@ -2294,3 +2294,187 @@ export const handler = async (event: any): Promise<any> => {
   }
 };
 
+
+
+
+Here's the refactored implementation that first splits instruments by market segment, then processes each segment through the instrument processor, and finally combines and stores the results:
+
+```typescript
+import { Instrument, MarketSegment } from '../types/Instrument';
+import { BusinessRule } from '../types/Rule';
+import { FactService } from './FactService';
+import { InstrumentProcessor } from './InstrumentProcessor';
+
+interface ProcessingResult {
+  validInstruments: Instrument[];
+  invalidCount: number;
+  segmentResults: Record<MarketSegment, SegmentResult>;
+}
+
+interface SegmentResult {
+  count: number;
+  firstSequence: number;
+  lastSequence: number;
+}
+
+export class InstrumentPipeline {
+  constructor(
+    private factService: FactService,
+    private rules: BusinessRule[]
+  ) {}
+
+  // 1. Split instruments by market segment
+  private splitBySegment(instruments: Instrument[]): Record<MarketSegment, Instrument[]> {
+    return instruments.reduce((acc, instrument) => {
+      const segment = instrument.market_segment_code;
+      if (!acc[segment]) {
+        acc[segment] = [];
+      }
+      acc[segment].push(instrument);
+      return acc;
+    }, {} as Record<MarketSegment, Instrument[]>);
+  }
+
+  // 2. Process each segment through instrument processor
+  private async processSegments(
+    segments: Record<MarketSegment, Instrument[]>
+  ): Promise<{
+    allValid: Instrument[];
+    segmentResults: Record<MarketSegment, SegmentResult>;
+  }> {
+    const segmentEntries = Object.entries(segments);
+    const processor = new InstrumentProcessor(this.factService, this.rules);
+
+    // Process all segments in parallel
+    const processedSegments = await Promise.all(
+      segmentEntries.map(async ([segment, instruments]) => {
+        const result = await processor.processInstruments(instruments);
+        return { segment, result };
+      })
+    );
+
+    // Combine results
+    const allValid: Instrument[] = [];
+    const segmentResults: Record<MarketSegment, SegmentResult> = {};
+
+    processedSegments.forEach(({ segment, result }) => {
+      allValid.push(...result.validInstruments);
+      segmentResults[segment] = {
+        count: result.validInstruments.length,
+        firstSequence: result.validInstruments[0]?.sequence_number || 0,
+        lastSequence: result.validInstruments[result.validInstruments.length - 1]?.sequence_number || 0
+      };
+    });
+
+    return { allValid, segmentResults };
+  }
+
+  // 3. Main processing pipeline
+  async execute(rawInstruments: Instrument[]): Promise<ProcessingResult> {
+    // Step 1: Split by market segment
+    const segments = this.splitBySegment(rawInstruments);
+    console.log(`Split into ${Object.keys(segments).length} market segments`);
+
+    // Step 2: Process each segment
+    const { allValid, segmentResults } = await this.processSegments(segments);
+
+    // Step 3: Apply final global rules
+    const finalInstruments = this.applyGlobalRules(allValid);
+    console.log(`Final valid instruments: ${finalInstruments.length}`);
+
+    // Step 4: Store results
+    await this.factService.batchInsertInstruments(finalInstruments);
+
+    return {
+      validInstruments: finalInstruments,
+      invalidCount: rawInstruments.length - finalInstruments.length,
+      segmentResults
+    };
+  }
+
+  private applyGlobalRules(instruments: Instrument[]): Instrument[] {
+    // Implement any cross-segment rules here
+    return instruments.filter(instrument => 
+      instrument.sequence_number <= 1000 // Example global limit
+    );
+  }
+}
+```
+
+### InstrumentProcessor (Updated)
+
+```typescript
+export class InstrumentProcessor {
+  constructor(
+    private factService: FactService,
+    private rules: BusinessRule[]
+  ) {}
+
+  async processInstruments(instruments: Instrument[]): Promise<{
+    validInstruments: Instrument[];
+    invalidCount: number;
+  }> {
+    if (instruments.length === 0) {
+      return { validInstruments: [], invalidCount: 0 };
+    }
+
+    // 1. Apply business rules
+    const filtered = this.applyRules(instruments);
+    
+    // 2. Assign sequence numbers
+    const sequenced = this.assignSequenceNumbers(filtered);
+    
+    return {
+      validInstruments: sequenced,
+      invalidCount: instruments.length - sequenced.length
+    };
+  }
+
+  private applyRules(instruments: Instrument[]): Instrument[] {
+    return instruments.filter(instrument => 
+      this.rules.every(rule => this.evaluateRule(instrument, rule))
+    );
+  }
+
+  private evaluateRule(instrument: Instrument, rule: BusinessRule): boolean {
+    // Implement rule evaluation logic
+    switch (rule.type) {
+      case 'active_only': 
+        return instrument.is_active;
+      case 'valid_dates':
+        return new Date() >= new Date(instrument.first_trading_date) && 
+               new Date() <= new Date(instrument.last_trading_date);
+      default:
+        return true;
+    }
+  }
+
+  private assignSequenceNumbers(instruments: Instrument[]): Instrument[] {
+    return instruments.map((instrument, index) => ({
+      ...instrument,
+      sequence_number: index + 1,
+      processed_at: new Date()
+    }));
+  }
+}
+```
+
+### Usage Example
+
+```typescript
+// Initialize
+const factService = new FactService();
+const rules = await loadRulesFromS3(); // Your rule loading implementation
+const pipeline = new InstrumentPipeline(factService, rules);
+
+// Execute pipeline
+const rawInstruments = await factService.fetchActiveInstruments();
+const results = await pipeline.execute(rawInstruments);
+
+console.log('Processing complete');
+console.log(`Valid instruments: ${results.validInstruments.length}`);
+console.log(`Invalid instruments: ${results.invalidCount}`);
+console.log('Segment results:', results.segmentResults);
+```
+
+
