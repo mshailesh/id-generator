@@ -2478,3 +2478,227 @@ console.log('Segment results:', results.segmentResults);
 ```
 
 
+Here's the full set of test cases for the `RuleHandler`, `InstrumentProcessor`, `SequentialGroupingTagging`, and `Lambda Handler`. These tests are written in a modular way, using Jest as the testing framework for easy execution.
+
+---
+
+### **1. Tests for RuleHandler**
+This validates individual rule handlers and their chaining functionality.
+
+```typescript
+// tests/RuleHandler.test.ts
+import { RuleHandler } from '../handlers/RuleHandler';
+import { Rule1Handler } from '../handlers/Rule1Handler';
+import { Rule2Handler } from '../handlers/Rule2Handler';
+
+describe('RuleHandler', () => {
+  let rule1Handler: Rule1Handler;
+  let rule2Handler: Rule2Handler;
+
+  beforeEach(() => {
+    rule1Handler = new Rule1Handler();
+    rule2Handler = new Rule2Handler();
+    rule1Handler.setNext(rule2Handler);
+  });
+
+  it('should process an instrument that passes all rules', async () => {
+    const instrument = { id: '1', rule1Condition: true, rule2Condition: true };
+    const result = await rule1Handler.handle(instrument);
+    expect(result).toEqual(instrument);
+  });
+
+  it('should stop processing if Rule 1 fails', async () => {
+    const instrument = { id: '2', rule1Condition: false, rule2Condition: true };
+    await expect(rule1Handler.handle(instrument)).rejects.toThrow('Instrument 2 failed Rule 1');
+  });
+
+  it('should stop processing if Rule 2 fails', async () => {
+    const instrument = { id: '3', rule1Condition: true, rule2Condition: false };
+    await expect(rule1Handler.handle(instrument)).rejects.toThrow('Instrument 3 failed Rule 2');
+  });
+});
+```
+
+---
+
+### **2. Tests for InstrumentProcessor**
+This tests the overall processing of instruments using the rule chain.
+
+```typescript
+// tests/InstrumentProcessor.test.ts
+import { InstrumentProcessor } from '../processors/InstrumentProcessor';
+import { Rule1Handler } from '../handlers/Rule1Handler';
+import { Rule2Handler } from '../handlers/Rule2Handler';
+
+describe('InstrumentProcessor', () => {
+  let rule1Handler: Rule1Handler;
+  let rule2Handler: Rule2Handler;
+  let instrumentProcessor: InstrumentProcessor;
+
+  beforeEach(() => {
+    rule1Handler = new Rule1Handler();
+    rule2Handler = new Rule2Handler();
+    rule1Handler.setNext(rule2Handler);
+
+    instrumentProcessor = new InstrumentProcessor(rule1Handler);
+  });
+
+  it('should process only valid instruments', async () => {
+    const instruments = [
+      { id: '1', rule1Condition: true, rule2Condition: true },
+      { id: '2', rule1Condition: false, rule2Condition: true },
+      { id: '3', rule1Condition: true, rule2Condition: false },
+      { id: '4', rule1Condition: true, rule2Condition: true },
+    ];
+
+    const result = await instrumentProcessor.processInstruments(instruments);
+
+    expect(result).toEqual([
+      { id: '1', rule1Condition: true, rule2Condition: true },
+      { id: '4', rule1Condition: true, rule2Condition: true },
+    ]);
+  });
+
+  it('should return an empty array if no instruments are valid', async () => {
+    const instruments = [
+      { id: '1', rule1Condition: false, rule2Condition: true },
+      { id: '2', rule1Condition: true, rule2Condition: false },
+    ];
+
+    const result = await instrumentProcessor.processInstruments(instruments);
+
+    expect(result).toEqual([]);
+  });
+});
+```
+
+---
+
+### **3. Tests for SequentialGroupingTagging**
+This validates the grouping and sequence assignment logic.
+
+```typescript
+// tests/SequentialGroupingTagging.test.ts
+import { assignSequenceNumbersByGroup } from '../utils/SequencingUtil';
+
+describe('SequentialGroupingTagging', () => {
+  it('should assign sequence numbers based on groups', () => {
+    const instruments = [
+      { id: '1', trade_sub_type: 'block', commodity_code: 'gold', instrument_type: 'type1', expiry_date: '2025-12-01' },
+      { id: '2', trade_sub_type: 'block', commodity_code: 'gold', instrument_type: 'type1', expiry_date: '2025-12-01' },
+      { id: '3', trade_sub_type: 'block', commodity_code: 'silver', instrument_type: 'type2', expiry_date: '2025-11-01' },
+      { id: '4', trade_sub_type: 'efp', commodity_code: 'gold', instrument_type: 'type1', expiry_date: '2025-10-01' },
+    ];
+
+    const result = assignSequenceNumbersByGroup(instruments);
+
+    expect(result).toEqual([
+      { id: '1', trade_sub_type: 'block', commodity_code: 'gold', instrument_type: 'type1', expiry_date: '2025-12-01', sequence_number: 1 },
+      { id: '2', trade_sub_type: 'block', commodity_code: 'gold', instrument_type: 'type1', expiry_date: '2025-12-01', sequence_number: 1 },
+      { id: '3', trade_sub_type: 'block', commodity_code: 'silver', instrument_type: 'type2', expiry_date: '2025-11-01', sequence_number: 2 },
+      { id: '4', trade_sub_type: 'efp', commodity_code: 'gold', instrument_type: 'type1', expiry_date: '2025-10-01', sequence_number: 3 },
+    ]);
+  });
+
+  it('should handle an empty instrument list', () => {
+    const instruments: any[] = [];
+    const result = assignSequenceNumbersByGroup(instruments);
+    expect(result).toEqual([]);
+  });
+});
+```
+
+---
+
+### **4. Tests for Lambda Handler**
+This tests the full workflow of the Lambda handler, including integration of all components.
+
+```typescript
+// tests/LambdaHandler.test.ts
+import { handler } from '../lambda/Handler';
+import { InstrumentLoader } from '../loaders/InstrumentLoader';
+import { DatabaseStorageHandler } from '../utils/DatabaseStorageHandler';
+import { assignSequenceNumbersByGroup } from '../utils/SequencingUtil';
+
+jest.mock('../loaders/InstrumentLoader');
+jest.mock('../utils/DatabaseStorageHandler');
+jest.mock('../utils/SequencingUtil');
+
+describe('Lambda Handler', () => {
+  let mockInstruments: any[];
+
+  beforeEach(() => {
+    mockInstruments = [
+      { id: '1', rule1Condition: true, rule2Condition: true },
+      { id: '2', rule1Condition: false, rule2Condition: true },
+      { id: '3', rule1Condition: true, rule2Condition: false },
+      { id: '4', rule1Condition: true, rule2Condition: true },
+    ];
+
+    (InstrumentLoader.prototype.loadInstruments as jest.Mock).mockResolvedValue(mockInstruments);
+    (DatabaseStorageHandler.prototype.storeInstruments as jest.Mock).mockResolvedValue(undefined);
+    (assignSequenceNumbersByGroup as jest.Mock).mockImplementation((instruments) => instruments.map((i, index) => ({ ...i, sequence_number: index + 1 })));
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('should process and store valid instruments', async () => {
+    const event = {};
+    const response = await handler(event);
+
+    expect(InstrumentLoader.prototype.loadInstruments).toHaveBeenCalled();
+    expect(DatabaseStorageHandler.prototype.storeInstruments).toHaveBeenCalledWith([
+      { id: '1', rule1Condition: true, rule2Condition: true, sequence_number: 1 },
+      { id: '4', rule1Condition: true, rule2Condition: true, sequence_number: 2 },
+    ]);
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).message).toBe('Processing complete');
+  });
+
+  it('should return 200 and empty array if no instruments are valid', async () => {
+    (InstrumentLoader.prototype.loadInstruments as jest.Mock).mockResolvedValue([]);
+
+    const event = {};
+    const response = await handler(event);
+
+    expect(InstrumentLoader.prototype.loadInstruments).toHaveBeenCalled();
+    expect(DatabaseStorageHandler.prototype.storeInstruments).not.toHaveBeenCalled();
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body).validInstruments).toEqual([]);
+  });
+
+  it('should return 500 if an error occurs', async () => {
+    (InstrumentLoader.prototype.loadInstruments as jest.Mock).mockRejectedValue(new Error('Database error'));
+
+    const event = {};
+    const response = await handler(event);
+
+    expect(response.statusCode).toBe(500);
+    expect(JSON.parse(response.body).error).toBe('Internal Server Error');
+  });
+});
+```
+
+---
+
+### **Execution**
+
+To run the tests, use the following command:
+
+```bash
+npx jest
+```
+
+---
+
+### **Key Features of These Tests**
+1. **Unit Tests**:
+   - Validates individual components like `RuleHandler`, `InstrumentProcessor`, and `SequentialGroupingTagging`.
+2. **Integration Tests**:
+   - Ensures all components work together seamlessly in the Lambda handler.
+3. **Mocked Dependencies**:
+   - External dependencies like `InstrumentLoader` and `DatabaseStorageHandler` are mocked for isolated testing.
+
+Let me know if you'd like additional enhancements or scenarios added! 🚀
