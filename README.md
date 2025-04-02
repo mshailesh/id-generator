@@ -3008,6 +3008,47 @@ class InstrumentProcessor {
       limit(() => processInstrument(instrument))
     );
 
+
+
+flowchart LR
+    A[⏰ Daily Scheduler] --> B[AWS Lambda Trigger]
+    
+    subgraph "1. Initial Loading"
+        C[Load Rules + Instruments] --> D{Success?}
+        D -->|Yes| E[Get Trading Date]
+        D -->|No| F[❌ Return 500]
+    end
+    
+    E --> G{{Splitter}}
+    
+    subgraph "2. Parallel Processing"
+        G --> H1[Segment A] --> I1[Rule 1] --> J1[Rule 2] --> K1[Rule 3]
+        G --> H2[Segment B] --> I2[Rule 1] --> J2[Rule 2] --> K2[Rule 3]
+        G --> H3[Segment C] --> I3[Rule 1] --> J3[Rule 2] --> K3[Rule 3]
+    end
+    
+    %% Error handling note
+    G -.->|Rule failures drop instrument| X(Error Handling)
+
+    K1 --> L{{Aggregator}}
+    K2 --> L
+    K3 --> L
+
+    L --> M[3. Upsert Results] --> N[(RDS/S3)]
+
+    %% Softer, muted color scheme
+    style A fill:#ECEFF1,stroke:#B0BEC5;  %% Light Grey (Scheduler)
+    style B fill:#CFD8DC,stroke:#90A4AE;  %% Light Blue-Grey (Trigger)
+    style C fill:#E3F2FD,stroke:#90CAF9;  %% Very Light Blue (Loading)
+    style D fill:#E0E0E0,stroke:#BDBDBD;  %% Soft Grey (Decision)
+    style E fill:#D0EBFF,stroke:#90CAF9;  %% Muted Blue (Get Trading Date)
+    style F fill:#FFEBEE,stroke:#EF9A9A;  %% Light Red (Error)
+    style G fill:#D7CCC8,stroke:#A1887F;  %% Soft Brown-Grey (Splitter)
+    style L fill:#E0F7FA,stroke:#80CBC4;  %% Very Soft Blue (Aggregator)
+    style N fill:#F5F5F5,stroke:#B0BEC5;  %% Light Grey (Storage)
+    style X fill:#ECEFF1,stroke:#FFAB91,font-size:12px;  %% Error Note (Soft Red Tint)
+
+
     const results = await Promise.all(processingPromises);
     return results.filter(Boolean);
   }
