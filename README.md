@@ -2979,3 +2979,36 @@ npx jest
 - You can add further test cases to ensure robustness.
 
 Let me know if you’d like further enhancements or explanations! 🚀
+
+
+
+import { RuleHandler } from './handlers/RuleHandler';
+import pLimit from 'p-limit'; // Tiny concurrency control library
+import logger from '../utils/logger';
+
+class InstrumentProcessor {
+  constructor(private ruleHandlerChain: RuleHandler) {}
+
+  async processInstrumentsParallel(
+    instruments: any[],
+    concurrency: number = 5
+  ): Promise<any[]> {
+    const limit = pLimit(concurrency);
+
+    const processInstrument = async (instrument: any) => {
+      try {
+        return await this.ruleHandlerChain.handle(instrument);
+      } catch (error) {
+        logger.error(`Failed processing instrument ${instrument.id}`, error);
+        return null;
+      }
+    };
+
+    const processingPromises = instruments.map(instrument => 
+      limit(() => processInstrument(instrument))
+    );
+
+    const results = await Promise.all(processingPromises);
+    return results.filter(Boolean);
+  }
+}
