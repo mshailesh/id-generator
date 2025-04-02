@@ -3008,47 +3008,48 @@ class InstrumentProcessor {
       limit(() => processInstrument(instrument))
     );
 
-
 flowchart LR
-    A[⏰ Daily Scheduler] --> B[AWS Lambda Trigger]
-    
-    subgraph "1. Initial Loading"
-        C[Load Rules + Instruments] --> D{Success?}
+    %% ========= STAGE 1 =========
+    subgraph "1. Preload Data"
+        direction TB
+        A[⏰ Daily Scheduler] --> B[AWS Lambda Trigger]
+        B --> C[Load Rules + Instruments]
+        C --> D{Success?}
         D -->|Yes| E[Get Trading Date]
         D -->|No| F[❌ Return 500]
     end
-    
-    E --> G{{Splitter}}
-    
-    subgraph "2. Parallel Processing"
+
+    %% ========= STAGE 2 =========
+    subgraph "2.Parallel Rule Evaluation"
+        direction LR
+        E --> G{{Splitter}}
         G --> H1[Segment A] --> I1[Rule 1] --> J1[Rule 2] --> K1[Rule 3]
         G --> H2[Segment B] --> I2[Rule 1] --> J2[Rule 2] --> K2[Rule 3]
         G --> H3[Segment C] --> I3[Rule 1] --> J3[Rule 2] --> K3[Rule 3]
+        note["Failed instruments are dropped silently"]:::note
     end
-    
-    %% Error handling note
-    G -.->|Rule failures drop instrument| X(Error Handling)
 
-    K1 --> L{{Aggregator}}
-    K2 --> L
-    K3 --> L
+    %% ========= STAGE 3 =========
+    subgraph "3.Bulk Tagging & Rules"
+        direction LR
+        K1 & K2 & K3 --> L{{Aggregator}}
+        L --> M[Sort Data] --> N[Apply Bulk Tags]
+        N --> O[Final Rule Chain]
+        O --> P[Rule 1] --> Q[Rule 2] --> R[Rule 3]
+    end
 
-    L --> M[3. Upsert Results] --> N[(RDS/S3)]
+    %% ========= STAGE 4 =========
+    subgraph "4.Upsert Results"
+        direction LR
+        R --> S[Prepare Batch]
+        S --> T[Upsert to RDS]
+        S --> U[Write to S3]
+    end
 
-    %% Soft muted color scheme
-    style A fill:#ECEFF1,stroke:#B0BEC5;
-    style B fill:#CFD8DC,stroke:#90A4AE;
-    style C fill:#E3F2FD,stroke:#90CAF9;
-    style D fill:#E0E0E0,stroke:#BDBDBD;
-    style E fill:#D0EBFF,stroke:#90CAF9;
-    style F fill:#FFEBEE,stroke:#EF9A9A;
-    style G fill:#D7CCC8,stroke:#A1887F;
-    style L fill:#E0F7FA,stroke:#80CBC4;
-    style N fill:#F5F5F5,stroke:#B0BEC5;
-    style X fill:#ECEFF1,stroke:#FFAB91,font-size:12px;
-
-
-    const results = await Promise.all(processingPromises);
-    return results.filter(Boolean);
+    %% Styles
+    classDef stage fill:#f8f9fa,stroke:#495057,stroke-width:2px,font-weight:bold
+    classDef note fill:#fff3bf,stroke:#ffd43b,font-size:12px
+    classDef error fill:#ffe3e3,stroke:#ff8787
+    class F error
   }
 }
