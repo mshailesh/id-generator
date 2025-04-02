@@ -3009,7 +3009,6 @@ class InstrumentProcessor {
     );
 
 
-
 flowchart LR
     A[⏰ Daily Scheduler] --> B[AWS Lambda Trigger]
     
@@ -3036,17 +3035,17 @@ flowchart LR
 
     L --> M[3. Upsert Results] --> N[(RDS/S3)]
 
-    %% Softer, muted color scheme
-    style A fill:#ECEFF1,stroke:#B0BEC5;  %% Light Grey (Scheduler)
-    style B fill:#CFD8DC,stroke:#90A4AE;  %% Light Blue-Grey (Trigger)
-    style C fill:#E3F2FD,stroke:#90CAF9;  %% Very Light Blue (Loading)
-    style D fill:#E0E0E0,stroke:#BDBDBD;  %% Soft Grey (Decision)
-    style E fill:#D0EBFF,stroke:#90CAF9;  %% Muted Blue (Get Trading Date)
-    style F fill:#FFEBEE,stroke:#EF9A9A;  %% Light Red (Error)
-    style G fill:#D7CCC8,stroke:#A1887F;  %% Soft Brown-Grey (Splitter)
-    style L fill:#E0F7FA,stroke:#80CBC4;  %% Very Soft Blue (Aggregator)
-    style N fill:#F5F5F5,stroke:#B0BEC5;  %% Light Grey (Storage)
-    style X fill:#ECEFF1,stroke:#FFAB91,font-size:12px;  %% Error Note (Soft Red Tint)
+    %% Soft muted color scheme
+    style A fill:#ECEFF1,stroke:#B0BEC5;
+    style B fill:#CFD8DC,stroke:#90A4AE;
+    style C fill:#E3F2FD,stroke:#90CAF9;
+    style D fill:#E0E0E0,stroke:#BDBDBD;
+    style E fill:#D0EBFF,stroke:#90CAF9;
+    style F fill:#FFEBEE,stroke:#EF9A9A;
+    style G fill:#D7CCC8,stroke:#A1887F;
+    style L fill:#E0F7FA,stroke:#80CBC4;
+    style N fill:#F5F5F5,stroke:#B0BEC5;
+    style X fill:#ECEFF1,stroke:#FFAB91,font-size:12px;
 
 
     const results = await Promise.all(processingPromises);
