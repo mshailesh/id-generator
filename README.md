@@ -3088,101 +3088,82 @@ flowchart LR
         crit[500 Error]:::critical-error
     end
 ```
-
-### Key Changes:
-1. **Lambda Trigger Placement**:
-   - Now completely outside the preload stage box
-   - Directly connected to S3 rules loading
-
-2. **Visual Separation**:
-   - External components (scheduler + Lambda) have no border
-   - Processing stages remain in colored containers
-
-3. **Flow Clarity**:
-   ```
-   [Scheduler] → [Lambda] → [S3] → [Preload Stage] → [Processing]
-   ```
-
-4. **Error Handling**:
-   - 500 errors still only from preload validation
-   - Rule failures shown via notes (no arrows)
-
-**Implementation Notes**:
-1. Lambda trigger would typically:
-   - Be configured in AWS Console/CloudFormation
-   - Have IAM permissions for S3 + RDS access
-   - Time out if preload takes too long
-
-2. S3 rules loading happens before any data processing
-
-Would you like me to:
-1. Add Lambda timeout settings?
-2. Include IAM permission details?
-3. Show the trigger configuration separately?
-  }
-}
-
-
-Here’s a **Confluence-ready** table with formatting that you can directly copy-paste, including a Mermaid diagram:
+Here's a **Confluence-ready**, trader-focused contract table with Mermaid diagrams for clear visualization:
 
 ---
 
-### **JSON Rules Engine Library Overview**
+### **Trade Rules Engine Contract**  
 
-| **Feature**          | **Description**                                                                 | **Technical Details**                                                                 |
-|----------------------|-------------------------------------------------------------------------------|-------------------------------------------------------------------------------------|
-| **Core Engine**      | Lightweight, extensible JSON evaluator                                        | • ~350 LOC<br>• Zero dependencies<br>• Simple AST-based execution                   |
-| **Limitations**      | Fact data loading is application’s responsibility                             | • Engine only evaluates pre-loaded facts<br>• No built-in data connectors           |
-| **rule-engine-lib**  | Enhanced facade for trade workflows                                           | • Standardized `execute(facts, rules)` API<br>• Built-in:<br>  - S3 rule loader<br>  - DB fact hydrator<br>  - Common rule templates |
-| **Release Process**  | Versioned via Nexus                                                           | • Semantic versioning (e.g., `v2.1.0`)<br>• Backward-compatible<br>• Lambda-independent upgrades |
-| **Observability**    | Granular rule debugging                                                       | • Per-rule pass/fail logs<br>• Condition-level failure details<br>• CloudWatch integration |
-| **Performance**      | Optimized for trade processing                                                | • <50ms latency<br>• Rule caching<br>• Parallel condition evaluation               |
+| **Requirement**               | **Solution**                                                                 | **Technical Implementation**                                                                 |
+|------------------------------|-----------------------------------------------------------------------------|-------------------------------------------------------------------------------------------|
+| **1. Business-Managed Rules** | JSON rules editable by non-devs                                            | • Human-readable JSON schema<br>• Validation API prevents invalid rules                   |
+| **2. Real-Time Updates**      | S3-based rule promotion (UAT → Prod)                                       | • Versioned S3 objects (`rules/v1/trade-check.json`)<br>• Lambda hot-reloads on S3 event  |
+| **3. External Fact Data**     | DB → External Service                                                      | • gRPC/HTTP fact hydration service<br>• Cached facts with TTL                             |
+| **4. Schema Changes**         | Requires release                                                           | • Semantic versioning for rule schema<br>• Blue/green deployment                          |
+| **5. Readability & SRP**      | Chain of Responsibility pattern                                           | • One rule = one class<br>• Composite rules for AND/OR logic                              |
+| **6. Parallelization**        | Market-segment isolation                                                   | • Thread-per-segment (AU/NZ/JP)<br>• Shared final validation stage                        |
+| **7. Scale Limit**            | In-memory (15k trades)                                                     | • Batch processing<br>• Future: Kafka streams if >20k trades                              |
+| **8. Idempotency**            | Rule results are deterministic                                             | • Fact snapshotting<br>• No side effects in rule actions                                  |
 
 ---
 
 ### **Architecture Flow**  
 ```mermaid
 flowchart LR
-    A[App] -->|facts| B(("rule-engine-lib"))
-    B -->|load| C[(S3 Rules)]
-    B -->|fetch| D[(DB Facts)]
-    B --> E[[Core Engine]]
-    E -->|evaluate| F[JSON Rules]
-    E -->|log| G[(CloudWatch)]
-    style B fill:#4CAF50,stroke:#2E7D32,color:white
-    style E fill:#2196F3,stroke:#0D47A1
+    B[("Business User")] -->|Upload JSON| S3[(S3 Bucket\nUAT → Prod)]
+    S3 -->|Trigger| L[🔄 Lambda]
+    L -->|Load| E[[Engine]]
+    E -->|gRPC| F[Fact Service]
+    F --> DB[(Database)]
+    E -->|Process| M[Market Segments]
+    subgraph M[" "]
+        direction TB
+        AU[AU Thread] & NZ[NZ Thread] --> C[Common Validation]
+    end
+    style B fill:#FFD700,stroke:#DAA520
+    style S3 fill:#FFA07A,stroke:#CD5C5B
 ```
-
-**Copy-Paste Instructions**:
-1. **For the table**: Simply copy the markdown table above.
-2. **For the diagram**: 
-   - Paste the Mermaid code into a Confluence page.
-   - Ensure Mermaid is enabled (Confluence admin → Manage apps → Mermaid).
 
 ---
 
-### **Key Benefits**
+### **Key Guarantees**  
 ```text
-1. "Just Works" Design - No complex setup, minimal API surface
-2. Trade-Optimized - Pre-built validators for compliance/pricing
-3. Debuggable - See exactly which rule failed and why
+1. Zero Downtime Updates:  
+   - Rules deploy via S3 upload (no code deploy)  
+   - Business edits JSON → UAT test → Promote to Prod  
+
+2. Future-Proof Scaling:  
+   - Today: 15k in-memory trades  
+   - Tomorrow: Kafka stream processing  
+
+3. Clean Ownership:  
+   - DB team owns facts → External service  
+   - Traders own rules → JSON files  
+   - Devs own engine → Versioned releases  
 ```
 
-**Example Usage**:
-```python
-# Python-like pseudocode
-result = rule_engine.execute(
-    facts={"price": 150, "currency": "USD"},
-    rules=load_from_s3("trade-rules/v3.json")
-)
+**Example Rule JSON**:  
+```json
+{
+  "ruleId": "price-check-v2",
+  "condition": {
+    "and": [
+      { ">": ["price", "min_price"] },
+      { "<": ["price", "max_price"] }
+    ]
+  },
+  "actions": [
+    { "tag": "VALID" },
+    { "notify": "trader@desk" }
+  ]
+}
 ```
 
 ---
 
-This format:
-- Uses standard Confluence markdown
-- Includes a self-contained Mermaid diagram
-- Highlights trade-specific value
-- Maintains technical precision
+### **Copy-Paste Instructions**  
+1. **Table**: Copy the markdown table directly  
+2. **Diagram**: Paste the Mermaid block into Confluence (requires Mermaid plugin)  
+3. **JSON**: Use code block formatting (`{ }` button in Confluence)  
 
-Need adjustments to fit your Confluence template? Let me know!
+Need adjustments for your trading stack? Let me know!
