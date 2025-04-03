@@ -3008,48 +3008,116 @@ class InstrumentProcessor {
       limit(() => processInstrument(instrument))
     );
 
+Here's the corrected version with **Lambda trigger outside the preload stage**, maintaining all your requirements:
+
+```mermaid
 flowchart LR
-    %% ========= STAGE 1 =========
-    subgraph "1. Preload Data"
+    %% ===== EXTERNAL COMPONENTS =====
+    A[⏰ Daily Scheduler]:::scheduler --> B[λ AWS Lambda Trigger]:::lambda
+    B --> C0[📜 Load Rules from S3]:::s3
+
+    %% ===== STAGE 1: DATA PRELOAD =====
+    subgraph stage1["📦 1. Data Preload"]
         direction TB
-        A[⏰ Daily Scheduler] --> B[AWS Lambda Trigger]
-        B --> C[Load Rules + Instruments]
-        C --> D{Success?}
-        D -->|Yes| E[Get Trading Date]
-        D -->|No| F[❌ Return 500]
+        C0 --> C1[🗓️ Get Trading Date]:::sql
+        C1 --> C2[📊 Load Instruments]:::sql
+        C2 --> C3["Merge: Raw + Static + Derived"]:::sql
+        C3 --> D{Valid?}
+        D -->|✅| E[⚙️ Build Rule Chain]:::rule
+        D -->|❌| F[⛔ 500 Error]:::critical-error
     end
 
-    %% ========= STAGE 2 =========
-    subgraph "2.Parallel Rule Evaluation"
+    %% ===== STAGE 2: PROCESSING =====
+    subgraph stage2["⚡ 2. Parallel Execution"]
         direction LR
-        E --> G{{Splitter}}
-        G --> H1[Segment A] --> I1[Rule 1] --> J1[Rule 2] --> K1[Rule 3]
-        G --> H2[Segment B] --> I2[Rule 1] --> J2[Rule 2] --> K2[Rule 3]
-        G --> H3[Segment C] --> I3[Rule 1] --> J3[Rule 2] --> K3[Rule 3]
-        note["Failed instruments are dropped silently"]:::note
+        E --> G{{🔀 Split by Market}}:::splitter
+        G --> H1[🇦🇺 AU Market]:::market
+        G --> H2[🇳🇿 NZ Market]:::market
+        
+        subgraph H1[" "]
+            direction TB
+            I1[🛠️ Processor]:::processor
+            I1 --> J1["1. Validation"]
+            J1 --> L1["2. Pricing"]
+            L1 --> M1["3. Compliance"]
+            note1["Rule failure stops chain"]:::note
+        end
+        
+        subgraph H2[" "]
+            direction TB
+            I2[🛠️ Processor]:::processor
+            I2 --> J2["1. Validation"]
+            J2 --> L2["2. Pricing"]
+            L2 --> M2["3. Compliance"]
+        end
     end
 
-    %% ========= STAGE 3 =========
-    subgraph "3.Bulk Tagging & Rules"
-        direction LR
-        K1 & K2 & K3 --> L{{Aggregator}}
-        L --> M[Sort Data] --> N[Apply Bulk Tags]
-        N --> O[Final Rule Chain]
-        O --> P[Rule 1] --> Q[Rule 2] --> R[Rule 3]
+    %% ===== STAGE 3: FINAL PROCESSING =====
+    subgraph stage3["✨ 3. Final Processing"]
+        direction TB
+        M1 & M2 --> O{{🔄 Aggregate}}:::aggregator
+        O --> P["Group/Sort/Sequence"]:::sequence
+        P --> Q[🛠️ Processor]:::processor
+        Q --> R["Final Rules"]:::rules
     end
 
-    %% ========= STAGE 4 =========
-    subgraph "4.Upsert Results"
-        direction LR
-        R --> S[Prepare Batch]
-        S --> T[Upsert to RDS]
-        S --> U[Write to S3]
-    end
+    %% ===== STAGE 4: PERSISTENCE =====
+    R --> S[💾 Upsert RDS]:::storage
+    R --> T[📦 Write S3]:::storage
 
-    %% Styles
-    classDef stage fill:#f8f9fa,stroke:#495057,stroke-width:2px,font-weight:bold
-    classDef note fill:#fff3bf,stroke:#ffd43b,font-size:12px
-    classDef error fill:#ffe3e3,stroke:#ff8787
-    class F error
+    %% ===== STYLES =====
+    classDef scheduler fill:#6a1b9a,stroke:#4a148c,color:white
+    classDef lambda fill:#ff8f00,stroke:#e65100,color:white
+    classDef s3 fill:#81c784,stroke:#388e3c,color:white
+    classDef sql fill:#4285f4,stroke:#1a73e8,color:white
+    classDef rule fill:#689f38,stroke:#33691e,color:white
+    classDef splitter fill:#ffb300,stroke:#ff8f00
+    classDef market fill:#00796b,stroke:#004d40,color:white
+    classDef processor fill:#7b1fa2,stroke:#4a148c,color:white
+    classDef aggregator fill:#0097a7,stroke:#006064,color:white
+    classDef storage fill:#5c6bc0,stroke:#3949ab,color:white
+    classDef sequence fill:#e1f5fe,stroke:#039be5
+    classDef rules fill:#fbc02d,stroke:#f57f17
+    classDef critical-error fill:#ffcdd2,stroke:#f44336,stroke-width:2px
+    classDef note fill:#fff8e1,stroke:#ffc107,font-size:12px
+
+    %% ===== LEGEND =====
+    subgraph legend["Key"]
+        lambda[Lambda Trigger]:::lambda
+        s3[S3 Load]:::s3
+        crit[500 Error]:::critical-error
+    end
+```
+
+### Key Changes:
+1. **Lambda Trigger Placement**:
+   - Now completely outside the preload stage box
+   - Directly connected to S3 rules loading
+
+2. **Visual Separation**:
+   - External components (scheduler + Lambda) have no border
+   - Processing stages remain in colored containers
+
+3. **Flow Clarity**:
+   ```
+   [Scheduler] → [Lambda] → [S3] → [Preload Stage] → [Processing]
+   ```
+
+4. **Error Handling**:
+   - 500 errors still only from preload validation
+   - Rule failures shown via notes (no arrows)
+
+**Implementation Notes**:
+1. Lambda trigger would typically:
+   - Be configured in AWS Console/CloudFormation
+   - Have IAM permissions for S3 + RDS access
+   - Time out if preload takes too long
+
+2. S3 rules loading happens before any data processing
+
+Would you like me to:
+1. Add Lambda timeout settings?
+2. Include IAM permission details?
+3. Show the trigger configuration separately?
   }
 }
