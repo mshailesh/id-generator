@@ -3121,3 +3121,68 @@ Would you like me to:
 3. Show the trigger configuration separately?
   }
 }
+
+
+Here’s a **Confluence-ready** table with formatting that you can directly copy-paste, including a Mermaid diagram:
+
+---
+
+### **JSON Rules Engine Library Overview**
+
+| **Feature**          | **Description**                                                                 | **Technical Details**                                                                 |
+|----------------------|-------------------------------------------------------------------------------|-------------------------------------------------------------------------------------|
+| **Core Engine**      | Lightweight, extensible JSON evaluator                                        | • ~350 LOC<br>• Zero dependencies<br>• Simple AST-based execution                   |
+| **Limitations**      | Fact data loading is application’s responsibility                             | • Engine only evaluates pre-loaded facts<br>• No built-in data connectors           |
+| **rule-engine-lib**  | Enhanced facade for trade workflows                                           | • Standardized `execute(facts, rules)` API<br>• Built-in:<br>  - S3 rule loader<br>  - DB fact hydrator<br>  - Common rule templates |
+| **Release Process**  | Versioned via Nexus                                                           | • Semantic versioning (e.g., `v2.1.0`)<br>• Backward-compatible<br>• Lambda-independent upgrades |
+| **Observability**    | Granular rule debugging                                                       | • Per-rule pass/fail logs<br>• Condition-level failure details<br>• CloudWatch integration |
+| **Performance**      | Optimized for trade processing                                                | • <50ms latency<br>• Rule caching<br>• Parallel condition evaluation               |
+
+---
+
+### **Architecture Flow**  
+```mermaid
+flowchart LR
+    A[App] -->|facts| B(("rule-engine-lib"))
+    B -->|load| C[(S3 Rules)]
+    B -->|fetch| D[(DB Facts)]
+    B --> E[[Core Engine]]
+    E -->|evaluate| F[JSON Rules]
+    E -->|log| G[(CloudWatch)]
+    style B fill:#4CAF50,stroke:#2E7D32,color:white
+    style E fill:#2196F3,stroke:#0D47A1
+```
+
+**Copy-Paste Instructions**:
+1. **For the table**: Simply copy the markdown table above.
+2. **For the diagram**: 
+   - Paste the Mermaid code into a Confluence page.
+   - Ensure Mermaid is enabled (Confluence admin → Manage apps → Mermaid).
+
+---
+
+### **Key Benefits**
+```text
+1. "Just Works" Design - No complex setup, minimal API surface
+2. Trade-Optimized - Pre-built validators for compliance/pricing
+3. Debuggable - See exactly which rule failed and why
+```
+
+**Example Usage**:
+```python
+# Python-like pseudocode
+result = rule_engine.execute(
+    facts={"price": 150, "currency": "USD"},
+    rules=load_from_s3("trade-rules/v3.json")
+)
+```
+
+---
+
+This format:
+- Uses standard Confluence markdown
+- Includes a self-contained Mermaid diagram
+- Highlights trade-specific value
+- Maintains technical precision
+
+Need adjustments to fit your Confluence template? Let me know!
