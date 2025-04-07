@@ -3168,8 +3168,10 @@ flowchart LR
 
 Need adjustments for your trading stack? Let me know!
 
+Got it! Here's the updated `mergeInstruments` function, which includes functionality to track and return `successCount`, `errorCount`, and error details.
 
-
+### Revised Function:
+```typescript
 async mergeInstruments(
   tableName: string,
   dataList: Record<string, any>[],
@@ -3224,6 +3226,22 @@ async mergeInstruments(
     errorDetails.push({ data: dataList, error });
   }
 
+  return { successCount, errorCount, errorDetails };
+}
+```
+
+### Changes:
+1. **Tracking Success and Errors**:
+   - `successCount`: Tracks the number of successfully merged records.
+   - `errorCount`: Tracks the number of records that encountered errors.
+   - `errorDetails`: Contains detailed information about errors, including the problematic data and error object.
+
+2. **Return Type**: Returns an object with `successCount`, `errorCount`, and `errorDetails`.
+
+3. **Error Handling**: If the entire bulk operation fails, all rows are counted as errors, and the details are stored.
+
+### Notes:
+If you need to handle partial successes (e.g., if the database supports transactional operations and can provide more granular error details), further modifications may be required. Let me know if you want to explore that!
   return { successCount, errorCount, errorDetails };
 }
 
