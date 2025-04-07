@@ -3167,3 +3167,63 @@ flowchart LR
 3. **JSON**: Use code block formatting (`{ }` button in Confluence)  
 
 Need adjustments for your trading stack? Let me know!
+
+
+
+async mergeInstruments(
+  tableName: string,
+  dataList: Record<string, any>[],
+  onColumns: string[],
+  specialFields: {
+    dateFields: string[];
+    bitFields: string[];
+    timestampFields: string[];
+  }
+): Promise<{
+  successCount: number;
+  errorCount: number;
+  errorDetails: { data: Record<string, any>; error: Error }[];
+}> {
+  if (!dataList.length) {
+    logger.info('No data to merge');
+    return { successCount: 0, errorCount: 0, errorDetails: [] };
+  }
+
+  const firstEntry = dataList[0];
+  const columns = Object.keys(firstEntry).join(', ');
+  const onCondition = this.prepareOnCondition(onColumns);
+
+  const rows = dataList.map((data) => this.processData(data, specialFields));
+  const placeholders = rows
+    .map(() => `(${columns.split(', ').map(() => '?').join(', ')})`)
+    .join(', ');
+
+  const query = `
+    MERGE INTO ${tableName} AS target
+    USING (VALUES ${placeholders}) AS source (${columns})
+    ON ${onCondition}
+    WHEN MATCHED THEN
+      DO NOTHING
+    WHEN NOT MATCHED THEN
+      INSERT (${columns})
+      VALUES (${columns.split(', ').map((col) => `source.${col}`).join(', ')});
+  `;
+
+  let successCount = 0;
+  let errorCount = 0;
+  const errorDetails: { data: Record<string, any>; error: Error }[] = [];
+
+  try {
+    logger.debug('Executing bulk MERGE query', { query, values: rows.flat() });
+    await this.db.none(query, rows.flat());
+    successCount = dataList.length;
+    logger.info('Bulk merge complete');
+  } catch (error) {
+    logger.error('Error executing bulk MERGE query', { error, dataList });
+    errorCount = dataList.length;
+    errorDetails.push({ data: dataList, error });
+  }
+
+  return { successCount, errorCount, errorDetails };
+}
+
