@@ -3092,3 +3092,43 @@ await factService.mergeBulk(
 ```
 
 This version maintains all the essential functionality while being simpler and letting PostgreSQL handle UUID values directly.
+
+
+import pLimit from "p-limit";
+import os from "os";
+
+export class InstrumentProcessor {
+  private ruleHandlerChain: RuleHandler;
+  private ruleEngineWrapper: any;
+
+  constructor(ruleHandlerChain: RuleHandler, ruleEngineWrapper: any) {
+    this.ruleHandlerChain = ruleHandlerChain;
+    this.ruleEngineWrapper = ruleEngineWrapper;
+  }
+
+  async processInstrumentsDynamically(
+    instruments: any[]
+  ): Promise<any[]> {
+    // Dynamically calculate maxConcurrency
+    const cpuCount = os.cpus().length; // Number of CPU cores
+    const hardLimit = 100; // Prevent too many concurrent operations
+    const maxConcurrency = Math.min(cpuCount * 2, hardLimit); // Adjust as needed
+
+    // Use pLimit to enforce concurrency
+    const limit = pLimit(maxConcurrency);
+
+    const processingTasks = instruments.map((instrument) =>
+      limit(async () => {
+        const result = await this.ruleHandlerChain.handle(instrument);
+        this.ruleEngineWrapper.reset();
+        return result;
+      })
+    );
+
+    const processedInstruments = await Promise.all(processingTasks);
+
+    // Filter out null or undefined results
+    return processedInstruments.filter((result) => result !== null && result !== undefined);
+  }
+}
+
