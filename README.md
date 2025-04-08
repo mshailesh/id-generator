@@ -3054,81 +3054,139 @@ class FactService {
 }
 
 export default FactService;
-```
+```To dynamically derive concurrency for the `InstrumentProcessor` based on system resources, you can calculate the number of available CPU cores and adjust concurrency limits accordingly. For example, you can set the concurrency proportional to the number of CPU cores while applying an upper limit to avoid resource exhaustion.
 
-### Key Features:
+Here's how you can implement this dynamically:
 
-1. **Simplified Field Processing**:
-   - Only handles essential conversions (dates, numbers, JSON, etc.)
-   - No special UUID handling since PostgreSQL handles them natively
+---
 
-2. **Core Methods**:
-   - `insertSingle` for individual records
-   - `mergeBulk` for bulk insert/update operations
-   - Proper error handling and logging
-
-3. **Usage Examples**:
-
+### Updated `InstrumentProcessor` Implementation with Dynamic Concurrency
 ```typescript
-// Insert with UUID (no special handling needed)
-await factService.insertSingle('users', {
-  id: '123e4567-e89b-12d3-a456-426614174000', // Will insert as-is
-  name: 'John',
-  created_at: new Date()
-}, {
-  timestampFields: ['created_at']
-});
-
-// Bulk merge with conflict handling
-await factService.mergeBulk(
-  'products',
-  productList,
-  ['id'], // Conflict columns
-  {
-    numericFields: ['price'],
-    jsonFields: ['specs']
-  }
-);
-```
-
-This version maintains all the essential functionality while being simpler and letting PostgreSQL handle UUID values directly.
-
-
-import pLimit from "p-limit";
+import Bottleneck from "bottleneck";
 import os from "os";
+import { RuleHandler } from "../handlers/RuleHandler";
 
 export class InstrumentProcessor {
   private ruleHandlerChain: RuleHandler;
   private ruleEngineWrapper: any;
+  private limiter: Bottleneck;
 
   constructor(ruleHandlerChain: RuleHandler, ruleEngineWrapper: any) {
     this.ruleHandlerChain = ruleHandlerChain;
     this.ruleEngineWrapper = ruleEngineWrapper;
+
+    // Dynamically calculate max concurrency based on system resources
+    const maxConcurrency = this.calculateMaxConcurrency();
+
+    // Initialize Bottleneck with dynamic concurrency
+    this.limiter = new Bottleneck({
+      maxConcurrent: maxConcurrency,
+      minTime: 0, // No delay between tasks
+    });
   }
 
-  async processInstrumentsDynamically(
-    instruments: any[]
-  ): Promise<any[]> {
-    // Dynamically calculate maxConcurrency
-    const cpuCount = os.cpus().length; // Number of CPU cores
-    const hardLimit = 100; // Prevent too many concurrent operations
-    const maxConcurrency = Math.min(cpuCount * 2, hardLimit); // Adjust as needed
+  /**
+   * Dynamically calculate the maximum concurrency based on system resources.
+   * @returns The max concurrency value.
+   */
+  private calculateMaxConcurrency(): number {
+    const cpuCount = os.cpus().length; // Number of available CPU cores
+    const hardLimit = 100; // Set a hard upper limit to avoid resource exhaustion
+    const multiplier = 2; // Adjust multiplier for lightweight tasks
+    return Math.min(cpuCount * multiplier, hardLimit); // Derive concurrency dynamically
+  }
 
-    // Use pLimit to enforce concurrency
-    const limit = pLimit(maxConcurrency);
+  /**
+   * Processes a list of instruments with concurrency control.
+   * @param instruments List of instruments to process.
+   * @returns The processed instruments.
+   */
+  async processInstruments(instruments: any[]): Promise<any[]> {
+    const processedInstruments: any[] = [];
 
-    const processingTasks = instruments.map((instrument) =>
-      limit(async () => {
-        const result = await this.ruleHandlerChain.handle(instrument);
-        this.ruleEngineWrapper.reset();
-        return result;
+    // Schedule each instrument for processing
+    const tasks = instruments.map((instrument) =>
+      this.limiter.schedule(async () => {
+        try {
+          // Process the instrument using the rule handler chain
+          const result = await this.ruleHandlerChain.handle(instrument);
+
+          // Reset the rule engine wrapper after processing
+          this.ruleEngineWrapper.reset();
+
+          // Add the result to the processed instruments if valid
+          if (result) {
+            processedInstruments.push(result);
+          }
+        } catch (error) {
+          console.error(`Error processing instrument: ${JSON.stringify(instrument)}`, error);
+        }
       })
     );
 
-    const processedInstruments = await Promise.all(processingTasks);
+    // Wait for all tasks to complete
+    await Promise.all(tasks);
 
-    // Filter out null or undefined results
-    return processedInstruments.filter((result) => result !== null && result !== undefined);
+    return processedInstruments;
   }
 }
+```
 
+---
+
+### Key Features:
+1. **Dynamic Concurrency Calculation:**
+   - Uses `os.cpus().length` to dynamically derive the concurrency based on the system's available CPU cores.
+   - Multiplies the CPU core count by a configurable multiplier (e.g., `2`) to increase concurrency for lightweight tasks.
+   - Applies a hard limit (e.g., `100`) to prevent resource exhaustion in systems with a large number of CPU cores.
+
+2. **Flexible Concurrency Control:**
+   - Bottleneck automatically limits concurrent execution based on the derived value.
+
+3. **Robust Error Handling:**
+   - Errors are caught at the task level to ensure the process continues even if some tasks fail.
+
+4. **Efficient Resource Utilization:**
+   - The dynamically derived concurrency ensures the processor optimally utilizes system resources without overwhelming the CPU.
+
+---
+
+### Example Usage:
+```typescript
+import { InstrumentProcessor } from "./InstrumentProcessor";
+import { RuleHandler } from "../handlers/RuleHandler";
+
+// Example RuleHandler (dummy implementation for illustration)
+const ruleHandler = new RuleHandler();
+const ruleEngineWrapper = {
+  reset: () => console.log("Rule Engine Reset"),
+};
+
+// Instantiate InstrumentProcessor (concurrency derived dynamically)
+const processor = new InstrumentProcessor(ruleHandler, ruleEngineWrapper);
+
+// List of instruments to process (sample data)
+const instruments = [
+  { id: 1, name: "Instrument A" },
+  { id: 2, name: "Instrument B" },
+  { id: 3, name: "Instrument C" },
+  { id: 4, name: "Instrument D" },
+  { id: 5, name: "Instrument E" },
+];
+
+// Process instruments
+(async () => {
+  const processedInstruments = await processor.processInstruments(instruments);
+  console.log("Processed Instruments:", processedInstruments);
+})();
+```
+
+---
+
+### Monitoring Performance:
+After implementing this solution, you can test the system under varying workloads to ensure that the dynamically calculated concurrency performs optimally:
+1. **CPU Utilization:** Monitor CPU usage during execution using tools like `htop` or Task Manager.
+2. **Execution Time:** Measure the time taken to process all instruments and compare it across different multipliers.
+3. **Adjust Multiplier:** Fine-tune the multiplier (`2`) in `calculateMaxConcurrency` based on task complexity and performance.
+
+Let me know if you need help with further refinements or additional features!
