@@ -2900,85 +2900,21 @@ describe('Date Operators', () => {
   });
 });
 ```
-
-#### **RuleEngineWrapper.test.ts**
-```typescript
-import RuleEngineWrapper from '../RuleEngineWrapper';
-
-describe('RuleEngineWrapper', () => {
-  let wrapper: RuleEngineWrapper;
-
-  beforeEach(() => {
-    wrapper = new RuleEngineWrapper();
-  });
-
-  it('should evaluate rules with date operators', async () => {
-    const rules = [
-      {
-        conditions: {
-          all: [
-            { fact: 'nextTradingDate', operator: 'dateGreaterThan', value: '2025-04-01' },
-            { fact: 'firstTradingDate', operator: 'dateLessThanInclusive', value: '2025-05-01' },
-          ],
-        },
-        event: { type: 'dateComparison', params: { message: 'Dates are valid' } },
-      },
-    ];
-
-    const facts = {
-      nextTradingDate: '2025-04-15',
-      firstTradingDate: '2025-04-30',
-    };
-
-    wrapper.addRules(rules);
-    const events = await wrapper.evaluateRules(facts);
-
-    expect(events).toHaveLength(1);
-    expect(events[0].params.message).toBe('Dates are valid');
-  });
-
-  it('should return no events if conditions fail', async () => {
-    const rules = [
-      {
-        conditions: {
-          all: [
-            { fact: 'nextTradingDate', operator: 'dateGreaterThan', value: '2025-04-01' },
-            { fact: 'firstTradingDate', operator: 'dateLessThanInclusive', value: '2025-05-01' },
-          ],
-        },
-        event: { type: 'dateComparison', params: { message: 'Dates are valid' } },
-      },
-    ];
-
-    const facts = {
-      nextTradingDate: '2025-03-01',
-      firstTradingDate: '2025-06-01',
-    };
-
-    wrapper.addRules(rules);
-    const events = await wrapper.evaluateRules(facts);
-
-    expect(events).toHaveLength(0);
-  });
-});
-```
-
-Here's the complete and updated implementation of your `FactService` class, incorporating linting compliance, type safety, error handling, and efficient bulk operations:
-
-### Full Code Implementation
+Here's the complete simplified `FactService` code that removes UUID-specific handling since PostgreSQL can handle UUIDs directly:
 
 ```typescript
 import pgPromise from 'pg-promise';
 import logger from '../logger';
 
-// Type for special fields
 type SpecialFields = {
-  dateFields: string[];
-  bitFields: string[];
-  timestampFields: string[];
+  dateFields?: string[];
+  timeFields?: string[];
+  timestampFields?: string[];
+  numericFields?: string[];
+  jsonFields?: string[];
+  booleanFields?: string[];
 };
 
-// Type for the return value of mergeInstrumentsBulk
 type MergeResult = {
   successCount: number;
   errorCount: number;
@@ -2987,151 +2923,172 @@ type MergeResult = {
 
 class FactService {
   private db: pgPromise.IDatabase<any>;
+  private pgp: pgPromise.IMain;
 
   constructor() {
-    const pgp = pgPromise();
-    this.db = pgp({
-      host: process.env.RDS_HOST,
-      port: parseInt(process.env.RDS_PORT, 10),
-      user: process.env.RDS_USER,
-      password: process.env.RDS_PASSWORD,
-      database: process.env.RDS_DATABASE,
+    this.pgp = pgPromise({
+      capSQL: true,
+      query: (e) => logger.debug(`Executing query: ${e.query}`)
+    });
+
+    this.db = this.pgp({
+      host: process.env.DB_HOST,
+      port: parseInt(process.env.DB_PORT || '5432'),
+      database: process.env.DB_NAME,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+      max: 20
     });
   }
 
-  // Generic method to fetch data
-  async fetchFactData<T>(query: string, params: any[] = []): Promise<T[]> {
-    try {
-      logger.debug('Fetching fact data', { query, params });
-      return await this.db.any<T>(query, params);
-    } catch (error) {
-      logger.error('Error fetching fact data', { error: (error as Error).message, query, params });
-      throw error; // Re-throw to let the caller handle it
+  private processValue(value: any, fieldType?: string): any {
+    if (value === null || value === undefined) return null;
+
+    switch (fieldType) {
+      case 'date':
+        return new Date(value).toISOString().split('T')[0];
+      case 'time':
+        return new Date(value).toISOString().split('T')[1].slice(0, 8);
+      case 'timestamp':
+        return new Date(value).toISOString();
+      case 'numeric':
+        const num = Number(value);
+        return isNaN(num) ? 0 : num;
+      case 'json':
+        return typeof value === 'string' ? value : JSON.stringify(value);
+      case 'boolean':
+        return Boolean(value);
+      default:
+        return value;
     }
   }
 
-  // Helper to prepare column placeholders
-  private preparePlaceholders(
-    data: Record<string, any>,
-    specialFields: SpecialFields
-  ): string {
-    const { dateFields, bitFields, timestampFields } = specialFields;
-
-    return Object.keys(data)
-      .map((key, index) => {
-        if (dateFields.includes(key)) {
-          return `$${index + 1}::DATE`;
-        } else if (bitFields.includes(key)) {
-          return `$${index + 1}::BIT(1)`;
-        } else if (timestampFields.includes(key)) {
-          return `$${index + 1}::TIMESTAMP`;
-        }
-        return `$${index + 1}`;
-      })
-      .join(', ');
-  }
-
-  // Helper to create ON condition dynamically
-  private prepareOnCondition(onColumns: string[]): string {
-    return onColumns.map((col) => `target.${col} = source.${col}`).join(' AND ');
-  }
-
-  // Helper to preprocess data for special fields
-  private processData(
-    data: Record<string, any>,
-    specialFields: SpecialFields
-  ): any[] {
-    const { dateFields, bitFields, timestampFields } = specialFields;
-
-    return Object.keys(data).map((key) => {
-      if (dateFields.includes(key)) {
-        return data[key] instanceof Date
-          ? (data[key] as Date).toISOString().split('T')[0]
-          : data[key];
-      } else if (bitFields.includes(key)) {
-        return data[key] === '0' || data[key] === '1' ? data[key] : '0';
-      } else if (timestampFields.includes(key)) {
-        return data[key] instanceof Date
-          ? (data[key] as Date).toISOString()
-          : data[key];
+  private processData(data: Record<string, any>, specialFields: SpecialFields): any[] {
+    return Object.entries(data).map(([key, value]) => {
+      if (specialFields.dateFields?.includes(key)) {
+        return this.processValue(value, 'date');
       }
-      return data[key];
+      if (specialFields.timeFields?.includes(key)) {
+        return this.processValue(value, 'time');
+      }
+      if (specialFields.timestampFields?.includes(key)) {
+        return this.processValue(value, 'timestamp');
+      }
+      if (specialFields.numericFields?.includes(key)) {
+        return this.processValue(value, 'numeric');
+      }
+      if (specialFields.jsonFields?.includes(key)) {
+        return this.processValue(value, 'json');
+      }
+      if (specialFields.booleanFields?.includes(key)) {
+        return this.processValue(value, 'boolean');
+      }
+      return value;
     });
   }
 
-  // Bulk merge function with error handling
-  async mergeInstrumentsBulk(
+  async insertSingle(
+    tableName: string,
+    data: Record<string, any>,
+    specialFields: SpecialFields = {},
+    options: { timeout?: number } = {}
+  ): Promise<any> {
+    const columns = Object.keys(data).join(', ');
+    const values = this.processData(data, specialFields);
+    const placeholders = values.map((_, i) => `$${i+1}`).join(', ');
+
+    const query = `INSERT INTO ${tableName} (${columns}) VALUES (${placeholders}) RETURNING *`;
+    
+    try {
+      const [result] = await this.db.any(query, values);
+      return result;
+    } catch (error) {
+      logger.error('Insert failed', { error, tableName, data });
+      throw error;
+    }
+  }
+
+  async mergeBulk(
     tableName: string,
     dataList: Record<string, any>[],
-    onColumns: string[],
-    specialFields: SpecialFields
+    conflictColumns: string[],
+    specialFields: SpecialFields = {},
+    options: { timeout?: number } = {}
   ): Promise<MergeResult> {
     if (!dataList.length) {
-      logger.info('No data to merge');
       return { successCount: 0, errorCount: 0, errorDetails: [] };
     }
 
-    // Prepare query components
-    const firstEntry = dataList[0];
-    const columns = Object.keys(firstEntry).join(', ');
-    const onCondition = this.prepareOnCondition(onColumns);
+    const columns = Object.keys(dataList[0]);
+    const values = dataList.flatMap(data => this.processData(data, specialFields));
 
-    const rows = dataList.map((data) => this.processData(data, specialFields));
-    const rowPlaceholders = `(${columns.split(', ').map(() => '?').join(', ')})`;
-    const placeholders = rows.map(() => rowPlaceholders).join(', ');
-
-    const query = `
-      MERGE INTO ${tableName} AS target
-      USING (VALUES ${placeholders}) AS source (${columns})
-      ON ${onCondition}
-      WHEN MATCHED THEN
-        DO NOTHING
-      WHEN NOT MATCHED THEN
-        INSERT (${columns})
-        VALUES (${columns.split(', ').map((col) => `source.${col}`).join(', ')});
-    `;
-
-    let successCount = 0;
-    let errorCount = 0;
-    const errorDetails: { data: Record<string, any>; error: string }[] = [];
+    const cs = new this.pgp.helpers.ColumnSet(columns, { table: tableName });
+    const query = `${this.pgp.helpers.insert(dataList, cs)} 
+      ON CONFLICT (${conflictColumns.join(', ')}) 
+      DO UPDATE SET ${columns.map(c => `${c}=EXCLUDED.${c}`).join(', ')} 
+      RETURNING *`;
 
     try {
-      logger.debug('Executing bulk MERGE query', { query, values: rows.flat() });
-      await this.db.none(query, rows.flat());
-      successCount = dataList.length;
-      logger.info('Bulk merge complete for all instruments');
+      const result = await this.db.any(query, values);
+      return {
+        successCount: result.length,
+        errorCount: dataList.length - result.length,
+        errorDetails: []
+      };
     } catch (error) {
-      logger.error('Error executing bulk MERGE query', { error: (error as Error).message, dataList });
-      errorCount = dataList.length; // Assume all rows failed in case of an error
-      dataList.forEach((data) =>
-        errorDetails.push({ data, error: (error as Error).message })
-      );
+      logger.error('Bulk merge failed', { error, tableName });
+      return {
+        successCount: 0,
+        errorCount: dataList.length,
+        errorDetails: dataList.map(data => ({
+          data,
+          error: (error as Error).message
+        }))
+      };
     }
+  }
 
-    return {
-      successCount,
-      errorCount,
-      errorDetails,
-    };
+  async close(): Promise<void> {
+    await this.pgp.end();
   }
 }
 
 export default FactService;
 ```
 
-### Key Highlights:
-1. **Type Safety:**
-   - `SpecialFields` and `MergeResult` types ensure clear expectations for function parameters and return values.
+### Key Features:
 
-2. **Error Handling:**
-   - Errors are serialized into a string format for easier logging and debugging.
-   - All errors are logged with detailed context.
+1. **Simplified Field Processing**:
+   - Only handles essential conversions (dates, numbers, JSON, etc.)
+   - No special UUID handling since PostgreSQL handles them natively
 
-3. **Linting Compliance:**
-   - No raw `Error` objects are exposed.
-   - ESLint recommendations, such as avoiding unused variables and enforcing consistent typing, are followed.
+2. **Core Methods**:
+   - `insertSingle` for individual records
+   - `mergeBulk` for bulk insert/update operations
+   - Proper error handling and logging
 
-4. **Efficient Bulk Operations:**
-   - Handles the entire `dataList` in a single SQL operation to improve performance.
+3. **Usage Examples**:
 
-Let me know if there’s anything else you’d like to adjust or further enhance!
+```typescript
+// Insert with UUID (no special handling needed)
+await factService.insertSingle('users', {
+  id: '123e4567-e89b-12d3-a456-426614174000', // Will insert as-is
+  name: 'John',
+  created_at: new Date()
+}, {
+  timestampFields: ['created_at']
+});
+
+// Bulk merge with conflict handling
+await factService.mergeBulk(
+  'products',
+  productList,
+  ['id'], // Conflict columns
+  {
+    numericFields: ['price'],
+    jsonFields: ['specs']
+  }
+);
+```
+
+This version maintains all the essential functionality while being simpler and letting PostgreSQL handle UUID values directly.
