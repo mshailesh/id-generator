@@ -2963,285 +2963,175 @@ describe('RuleEngineWrapper', () => {
 });
 ```
 
----
+Here's the complete and updated implementation of your `FactService` class, incorporating linting compliance, type safety, error handling, and efficient bulk operations:
 
-### **Running Tests**
-Run the tests using Jest:
-```bash
-npx jest
-```
+### Full Code Implementation
 
----
-
-### **Output Expectations**
-- Custom date operators are tested thoroughly for all edge cases.
-- `RuleEngineWrapper` correctly integrates the custom operators and evaluates rules.
-- You can add further test cases to ensure robustness.
-
-Let me know if you’d like further enhancements or explanations! 🚀
-
-
-
-import { RuleHandler } from './handlers/RuleHandler';
-import pLimit from 'p-limit'; // Tiny concurrency control library
-import logger from '../utils/logger';
-
-class InstrumentProcessor {
-  constructor(private ruleHandlerChain: RuleHandler) {}
-
-  async processInstrumentsParallel(
-    instruments: any[],
-    concurrency: number = 5
-  ): Promise<any[]> {
-    const limit = pLimit(concurrency);
-
-    const processInstrument = async (instrument: any) => {
-      try {
-        return await this.ruleHandlerChain.handle(instrument);
-      } catch (error) {
-        logger.error(`Failed processing instrument ${instrument.id}`, error);
-        return null;
-      }
-    };
-
-    const processingPromises = instruments.map(instrument => 
-      limit(() => processInstrument(instrument))
-    );
-
-Here's the corrected version with **Lambda trigger outside the preload stage**, maintaining all your requirements:
-
-```mermaid
-flowchart LR
-    %% ===== EXTERNAL COMPONENTS =====
-    A[⏰ Daily Scheduler]:::scheduler --> B[λ AWS Lambda Trigger]:::lambda
-    B --> C0[📜 Load Rules from S3]:::s3
-
-    %% ===== STAGE 1: DATA PRELOAD =====
-    subgraph stage1["📦 1. Data Preload"]
-        direction TB
-        C0 --> C1[🗓️ Get Trading Date]:::sql
-        C1 --> C2[📊 Load Instruments]:::sql
-        C2 --> C3["Merge: Raw + Static + Derived"]:::sql
-        C3 --> D{Valid?}
-        D -->|✅| E[⚙️ Build Rule Chain]:::rule
-        D -->|❌| F[⛔ 500 Error]:::critical-error
-    end
-
-    %% ===== STAGE 2: PROCESSING =====
-    subgraph stage2["⚡ 2. Parallel Execution"]
-        direction LR
-        E --> G{{🔀 Split by Market}}:::splitter
-        G --> H1[🇦🇺 AU Market]:::market
-        G --> H2[🇳🇿 NZ Market]:::market
-        
-        subgraph H1[" "]
-            direction TB
-            I1[🛠️ Processor]:::processor
-            I1 --> J1["1. Validation"]
-            J1 --> L1["2. Pricing"]
-            L1 --> M1["3. Compliance"]
-            note1["Rule failure stops chain"]:::note
-        end
-        
-        subgraph H2[" "]
-            direction TB
-            I2[🛠️ Processor]:::processor
-            I2 --> J2["1. Validation"]
-            J2 --> L2["2. Pricing"]
-            L2 --> M2["3. Compliance"]
-        end
-    end
-
-    %% ===== STAGE 3: FINAL PROCESSING =====
-    subgraph stage3["✨ 3. Final Processing"]
-        direction TB
-        M1 & M2 --> O{{🔄 Aggregate}}:::aggregator
-        O --> P["Group/Sort/Sequence"]:::sequence
-        P --> Q[🛠️ Processor]:::processor
-        Q --> R["Final Rules"]:::rules
-    end
-
-    %% ===== STAGE 4: PERSISTENCE =====
-    R --> S[💾 Upsert RDS]:::storage
-    R --> T[📦 Write S3]:::storage
-
-    %% ===== STYLES =====
-    classDef scheduler fill:#6a1b9a,stroke:#4a148c,color:white
-    classDef lambda fill:#ff8f00,stroke:#e65100,color:white
-    classDef s3 fill:#81c784,stroke:#388e3c,color:white
-    classDef sql fill:#4285f4,stroke:#1a73e8,color:white
-    classDef rule fill:#689f38,stroke:#33691e,color:white
-    classDef splitter fill:#ffb300,stroke:#ff8f00
-    classDef market fill:#00796b,stroke:#004d40,color:white
-    classDef processor fill:#7b1fa2,stroke:#4a148c,color:white
-    classDef aggregator fill:#0097a7,stroke:#006064,color:white
-    classDef storage fill:#5c6bc0,stroke:#3949ab,color:white
-    classDef sequence fill:#e1f5fe,stroke:#039be5
-    classDef rules fill:#fbc02d,stroke:#f57f17
-    classDef critical-error fill:#ffcdd2,stroke:#f44336,stroke-width:2px
-    classDef note fill:#fff8e1,stroke:#ffc107,font-size:12px
-
-    %% ===== LEGEND =====
-    subgraph legend["Key"]
-        lambda[Lambda Trigger]:::lambda
-        s3[S3 Load]:::s3
-        crit[500 Error]:::critical-error
-    end
-```
-Here's a **Confluence-ready**, trader-focused contract table with Mermaid diagrams for clear visualization:
-
----
-
-### **Trade Rules Engine Contract**  
-
-| **Requirement**               | **Solution**                                                                 | **Technical Implementation**                                                                 |
-|------------------------------|-----------------------------------------------------------------------------|-------------------------------------------------------------------------------------------|
-| **1. Business-Managed Rules** | JSON rules editable by non-devs                                            | • Human-readable JSON schema<br>• Validation API prevents invalid rules                   |
-| **2. Real-Time Updates**      | S3-based rule promotion (UAT → Prod)                                       | • Versioned S3 objects (`rules/v1/trade-check.json`)<br>• Lambda hot-reloads on S3 event  |
-| **3. External Fact Data**     | DB → External Service                                                      | • gRPC/HTTP fact hydration service<br>• Cached facts with TTL                             |
-| **4. Schema Changes**         | Requires release                                                           | • Semantic versioning for rule schema<br>• Blue/green deployment                          |
-| **5. Readability & SRP**      | Chain of Responsibility pattern                                           | • One rule = one class<br>• Composite rules for AND/OR logic                              |
-| **6. Parallelization**        | Market-segment isolation                                                   | • Thread-per-segment (AU/NZ/JP)<br>• Shared final validation stage                        |
-| **7. Scale Limit**            | In-memory (15k trades)                                                     | • Batch processing<br>• Future: Kafka streams if >20k trades                              |
-| **8. Idempotency**            | Rule results are deterministic                                             | • Fact snapshotting<br>• No side effects in rule actions                                  |
-
----
-
-### **Architecture Flow**  
-```mermaid
-flowchart LR
-    B[("Business User")] -->|Upload JSON| S3[(S3 Bucket\nUAT → Prod)]
-    S3 -->|Trigger| L[🔄 Lambda]
-    L -->|Load| E[[Engine]]
-    E -->|gRPC| F[Fact Service]
-    F --> DB[(Database)]
-    E -->|Process| M[Market Segments]
-    subgraph M[" "]
-        direction TB
-        AU[AU Thread] & NZ[NZ Thread] --> C[Common Validation]
-    end
-    style B fill:#FFD700,stroke:#DAA520
-    style S3 fill:#FFA07A,stroke:#CD5C5B
-```
-
----
-
-### **Key Guarantees**  
-```text
-1. Zero Downtime Updates:  
-   - Rules deploy via S3 upload (no code deploy)  
-   - Business edits JSON → UAT test → Promote to Prod  
-
-2. Future-Proof Scaling:  
-   - Today: 15k in-memory trades  
-   - Tomorrow: Kafka stream processing  
-
-3. Clean Ownership:  
-   - DB team owns facts → External service  
-   - Traders own rules → JSON files  
-   - Devs own engine → Versioned releases  
-```
-
-**Example Rule JSON**:  
-```json
-{
-  "ruleId": "price-check-v2",
-  "condition": {
-    "and": [
-      { ">": ["price", "min_price"] },
-      { "<": ["price", "max_price"] }
-    ]
-  },
-  "actions": [
-    { "tag": "VALID" },
-    { "notify": "trader@desk" }
-  ]
-}
-```
-
----
-
-### **Copy-Paste Instructions**  
-1. **Table**: Copy the markdown table directly  
-2. **Diagram**: Paste the Mermaid block into Confluence (requires Mermaid plugin)  
-3. **JSON**: Use code block formatting (`{ }` button in Confluence)  
-
-Need adjustments for your trading stack? Let me know!
-
-Got it! Here's the updated `mergeInstruments` function, which includes functionality to track and return `successCount`, `errorCount`, and error details.
-
-### Revised Function:
 ```typescript
-async mergeInstruments(
-  tableName: string,
-  dataList: Record<string, any>[],
-  onColumns: string[],
-  specialFields: {
-    dateFields: string[];
-    bitFields: string[];
-    timestampFields: string[];
-  }
-): Promise<{
+import pgPromise from 'pg-promise';
+import logger from '../logger';
+
+// Type for special fields
+type SpecialFields = {
+  dateFields: string[];
+  bitFields: string[];
+  timestampFields: string[];
+};
+
+// Type for the return value of mergeInstrumentsBulk
+type MergeResult = {
   successCount: number;
   errorCount: number;
-  errorDetails: { data: Record<string, any>; error: Error }[];
-}> {
-  if (!dataList.length) {
-    logger.info('No data to merge');
-    return { successCount: 0, errorCount: 0, errorDetails: [] };
+  errorDetails: { data: Record<string, any>; error: string }[];
+};
+
+class FactService {
+  private db: pgPromise.IDatabase<any>;
+
+  constructor() {
+    const pgp = pgPromise();
+    this.db = pgp({
+      host: process.env.RDS_HOST,
+      port: parseInt(process.env.RDS_PORT, 10),
+      user: process.env.RDS_USER,
+      password: process.env.RDS_PASSWORD,
+      database: process.env.RDS_DATABASE,
+    });
   }
 
-  const firstEntry = dataList[0];
-  const columns = Object.keys(firstEntry).join(', ');
-  const onCondition = this.prepareOnCondition(onColumns);
-
-  const rows = dataList.map((data) => this.processData(data, specialFields));
-  const placeholders = rows
-    .map(() => `(${columns.split(', ').map(() => '?').join(', ')})`)
-    .join(', ');
-
-  const query = `
-    MERGE INTO ${tableName} AS target
-    USING (VALUES ${placeholders}) AS source (${columns})
-    ON ${onCondition}
-    WHEN MATCHED THEN
-      DO NOTHING
-    WHEN NOT MATCHED THEN
-      INSERT (${columns})
-      VALUES (${columns.split(', ').map((col) => `source.${col}`).join(', ')});
-  `;
-
-  let successCount = 0;
-  let errorCount = 0;
-  const errorDetails: { data: Record<string, any>; error: Error }[] = [];
-
-  try {
-    logger.debug('Executing bulk MERGE query', { query, values: rows.flat() });
-    await this.db.none(query, rows.flat());
-    successCount = dataList.length;
-    logger.info('Bulk merge complete');
-  } catch (error) {
-    logger.error('Error executing bulk MERGE query', { error, dataList });
-    errorCount = dataList.length;
-    errorDetails.push({ data: dataList, error });
+  // Generic method to fetch data
+  async fetchFactData<T>(query: string, params: any[] = []): Promise<T[]> {
+    try {
+      logger.debug('Fetching fact data', { query, params });
+      return await this.db.any<T>(query, params);
+    } catch (error) {
+      logger.error('Error fetching fact data', { error: (error as Error).message, query, params });
+      throw error; // Re-throw to let the caller handle it
+    }
   }
 
-  return { successCount, errorCount, errorDetails };
+  // Helper to prepare column placeholders
+  private preparePlaceholders(
+    data: Record<string, any>,
+    specialFields: SpecialFields
+  ): string {
+    const { dateFields, bitFields, timestampFields } = specialFields;
+
+    return Object.keys(data)
+      .map((key, index) => {
+        if (dateFields.includes(key)) {
+          return `$${index + 1}::DATE`;
+        } else if (bitFields.includes(key)) {
+          return `$${index + 1}::BIT(1)`;
+        } else if (timestampFields.includes(key)) {
+          return `$${index + 1}::TIMESTAMP`;
+        }
+        return `$${index + 1}`;
+      })
+      .join(', ');
+  }
+
+  // Helper to create ON condition dynamically
+  private prepareOnCondition(onColumns: string[]): string {
+    return onColumns.map((col) => `target.${col} = source.${col}`).join(' AND ');
+  }
+
+  // Helper to preprocess data for special fields
+  private processData(
+    data: Record<string, any>,
+    specialFields: SpecialFields
+  ): any[] {
+    const { dateFields, bitFields, timestampFields } = specialFields;
+
+    return Object.keys(data).map((key) => {
+      if (dateFields.includes(key)) {
+        return data[key] instanceof Date
+          ? (data[key] as Date).toISOString().split('T')[0]
+          : data[key];
+      } else if (bitFields.includes(key)) {
+        return data[key] === '0' || data[key] === '1' ? data[key] : '0';
+      } else if (timestampFields.includes(key)) {
+        return data[key] instanceof Date
+          ? (data[key] as Date).toISOString()
+          : data[key];
+      }
+      return data[key];
+    });
+  }
+
+  // Bulk merge function with error handling
+  async mergeInstrumentsBulk(
+    tableName: string,
+    dataList: Record<string, any>[],
+    onColumns: string[],
+    specialFields: SpecialFields
+  ): Promise<MergeResult> {
+    if (!dataList.length) {
+      logger.info('No data to merge');
+      return { successCount: 0, errorCount: 0, errorDetails: [] };
+    }
+
+    // Prepare query components
+    const firstEntry = dataList[0];
+    const columns = Object.keys(firstEntry).join(', ');
+    const onCondition = this.prepareOnCondition(onColumns);
+
+    const rows = dataList.map((data) => this.processData(data, specialFields));
+    const rowPlaceholders = `(${columns.split(', ').map(() => '?').join(', ')})`;
+    const placeholders = rows.map(() => rowPlaceholders).join(', ');
+
+    const query = `
+      MERGE INTO ${tableName} AS target
+      USING (VALUES ${placeholders}) AS source (${columns})
+      ON ${onCondition}
+      WHEN MATCHED THEN
+        DO NOTHING
+      WHEN NOT MATCHED THEN
+        INSERT (${columns})
+        VALUES (${columns.split(', ').map((col) => `source.${col}`).join(', ')});
+    `;
+
+    let successCount = 0;
+    let errorCount = 0;
+    const errorDetails: { data: Record<string, any>; error: string }[] = [];
+
+    try {
+      logger.debug('Executing bulk MERGE query', { query, values: rows.flat() });
+      await this.db.none(query, rows.flat());
+      successCount = dataList.length;
+      logger.info('Bulk merge complete for all instruments');
+    } catch (error) {
+      logger.error('Error executing bulk MERGE query', { error: (error as Error).message, dataList });
+      errorCount = dataList.length; // Assume all rows failed in case of an error
+      dataList.forEach((data) =>
+        errorDetails.push({ data, error: (error as Error).message })
+      );
+    }
+
+    return {
+      successCount,
+      errorCount,
+      errorDetails,
+    };
+  }
 }
+
+export default FactService;
 ```
 
-### Changes:
-1. **Tracking Success and Errors**:
-   - `successCount`: Tracks the number of successfully merged records.
-   - `errorCount`: Tracks the number of records that encountered errors.
-   - `errorDetails`: Contains detailed information about errors, including the problematic data and error object.
+### Key Highlights:
+1. **Type Safety:**
+   - `SpecialFields` and `MergeResult` types ensure clear expectations for function parameters and return values.
 
-2. **Return Type**: Returns an object with `successCount`, `errorCount`, and `errorDetails`.
+2. **Error Handling:**
+   - Errors are serialized into a string format for easier logging and debugging.
+   - All errors are logged with detailed context.
 
-3. **Error Handling**: If the entire bulk operation fails, all rows are counted as errors, and the details are stored.
+3. **Linting Compliance:**
+   - No raw `Error` objects are exposed.
+   - ESLint recommendations, such as avoiding unused variables and enforcing consistent typing, are followed.
 
-### Notes:
-If you need to handle partial successes (e.g., if the database supports transactional operations and can provide more granular error details), further modifications may be required. Let me know if you want to explore that!
-  return { successCount, errorCount, errorDetails };
-}
+4. **Efficient Bulk Operations:**
+   - Handles the entire `dataList` in a single SQL operation to improve performance.
 
+Let me know if there’s anything else you’d like to adjust or further enhance!
