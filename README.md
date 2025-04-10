@@ -3330,3 +3330,23 @@ This implementation gives you:
 - Clean error handling and state management
 - Configurable concurrency for different workloads
 - Maintains all the original functionality
+
+
+
+// Helper function to track execution time
+async function withTiming<T>(operation: string, fn: () => Promise<T>) {
+  const start = performance.now();
+  try {
+    const result = await fn();
+    logger.info(`${operation} completed`, {
+      elapsedTime: `${(performance.now() - start).toFixed(2)}ms`
+    });
+    return result;
+  } catch (error) {
+    logger.error(`${operation} failed`, {
+      errorMessage: error.message,
+      elapsedTime: `${(performance.now() - start).toFixed(2)}ms`
+    });
+    throw error;
+  }
+}
