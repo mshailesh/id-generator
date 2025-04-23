@@ -3351,7 +3351,15 @@ async function withTiming<T>(operation: string, fn: () => Promise<T>) {
   }
 }
 
-// preloadInstrumentData.ts
+Here’s your code from the canvas, formatted in Markdown for documentation or sharing purposes:
+
+---
+
+# 🧠 Preloading and Rule Evaluation Using Preloaded Data
+
+## `preloadInstrumentData.ts`
+
+```ts
 import { FactService } from './services/FactService';
 import { Logger } from './services/Logger';
 
@@ -3398,8 +3406,13 @@ export class InstrumentDataLoader {
     return { trade, firms, instruments };
   }
 }
+```
 
-// handler.ts
+---
+
+## `handler.ts`
+
+```ts
 import { APIGatewayProxyHandler } from 'aws-lambda';
 import { InstrumentDataLoader } from './preloadInstrumentData';
 import RuleEngineWrapper from './ruleEngineWrapper';
@@ -3457,8 +3470,13 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     body: JSON.stringify(results)
   };
 };
+```
 
-// rules.json (example)
+---
+
+## `rules.json` Example
+
+```json
 [
   {
     "conditions": {
@@ -3500,4 +3518,8 @@ export const handler: APIGatewayProxyHandler = async (event) => {
     }
   }
 ]
+```
 
+---
+
+Let me know if you want this turned into a full markdown `.md` file or zipped with project scaffolding!
