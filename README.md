@@ -3350,3 +3350,154 @@ async function withTiming<T>(operation: string, fn: () => Promise<T>) {
     throw error;
   }
 }
+
+// preloadInstrumentData.ts
+import { FactService } from './services/FactService';
+import { Logger } from './services/Logger';
+
+export class InstrumentDataLoader {
+  constructor(private factService: FactService, private logger: Logger) {}
+
+  async preload(trade: any): Promise<{ firms: any[]; instruments: any[]; trade: any }> {
+    const firmCodes: Set<string> = new Set();
+    const legSymbols: Set<string> = new Set();
+
+    for (const leg of trade.legs || []) {
+      if (leg.sellSide?.sellerFirm) firmCodes.add(leg.sellSide.sellerFirm);
+      if (leg.buySide?.buyerFirm) firmCodes.add(leg.buySide.buyerFirm);
+      if (leg.thirdParty?.thirdPartyFirm) firmCodes.add(leg.thirdParty.thirdPartyFirm);
+      if (leg.legSymbol) legSymbols.add(leg.legSymbol);
+    }
+
+    const firmList = [...firmCodes];
+    const legList = [...legSymbols];
+
+    const firmPlaceholders = firmList.map(() => '?').join(', ');
+    const legPlaceholders = legList.map(() => '?').join(', ');
+
+    const firmsQuery = `
+      SELECT firm_code, market_segment_code
+      FROM firms
+      WHERE firm_code IN (${firmPlaceholders})
+    `;
+    const instrumentsQuery = `
+      SELECT contract_series_code, market_segment_code, instrument_type, expiry_date
+      FROM tradeable_instrument
+      WHERE contract_series_code IN (${legPlaceholders})
+    `;
+
+    this.logger.info('Preloading firms and instruments');
+    const [firms, instruments] = await Promise.all([
+      this.factService.fetchFactData(firmsQuery, firmList),
+      this.factService.fetchFactData(instrumentsQuery, legList)
+    ]);
+
+    this.logger.debug('Firms loaded', { count: firms.length });
+    this.logger.debug('Instruments loaded', { count: instruments.length });
+
+    return { trade, firms, instruments };
+  }
+}
+
+// handler.ts
+import { APIGatewayProxyHandler } from 'aws-lambda';
+import { InstrumentDataLoader } from './preloadInstrumentData';
+import RuleEngineWrapper from './ruleEngineWrapper';
+import FactService from './services/FactService';
+import RuleService from './services/RuleService';
+import S3Service from './services/S3Service';
+import { Logger } from './services/Logger';
+import { Rule } from 'json-rules-engine';
+
+const logger = new Logger();
+const factService = new FactService();
+const ruleEngineWrapper = new RuleEngineWrapper(
+  factService,
+  new RuleService(),
+  new S3Service()
+);
+const dataLoader = new InstrumentDataLoader(factService, logger);
+
+export const handler: APIGatewayProxyHandler = async (event) => {
+  logger.info('Processing incoming event');
+  const { trade } = JSON.parse(event.body!);
+
+  logger.info('Loading related data for trade');
+  const preload = await dataLoader.preload(trade);
+
+  const rules = [
+    new Rule({
+      conditions: {
+        all: [{
+          fact: 'instruments',
+          operator: 'greaterThan',
+          value: 0,
+          path: '$.length'
+        }]
+      },
+      event: {
+        type: 'instrumentDataAvailable',
+        params: { message: 'Instruments found' }
+      }
+    })
+  ];
+
+  const facts = {
+    trade: preload.trade,
+    firms: preload.firms,
+    instruments: preload.instruments
+  };
+
+  logger.info('Evaluating rules using preloaded data');
+  const results = await ruleEngineWrapper.evaluateRules(rules, facts);
+
+  logger.info('Rule evaluation completed', { events: results });
+  return {
+    statusCode: 200,
+    body: JSON.stringify(results)
+  };
+};
+
+// rules.json (example)
+[
+  {
+    "conditions": {
+      "all": [
+        {
+          "fact": "trade",
+          "path": "$.legs[*].legSymbol",
+          "operator": "in",
+          "value": {
+            "fact": "instruments",
+            "path": "$[*].contract_series_code"
+          }
+        }
+      ]
+    },
+    "event": {
+      "type": "validSymbols",
+      "params": {
+        "message": "All leg symbols are present in instrument data"
+      }
+    }
+  },
+  {
+    "conditions": {
+      "all": [
+        {
+          "fact": "instruments",
+          "path": "$[*].market_segment_code",
+          "operator": "equal",
+          "value": "MS1"
+        }
+      ]
+    },
+    "event": {
+      "type": "validMarketSegment",
+      "params": {
+        "message": "All instruments belong to market segment MS1"
+      }
+    }
+  }
+]
+
