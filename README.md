@@ -3523,3 +3523,217 @@ export const handler: APIGatewayProxyHandler = async (event) => {
 ---
 
 Let me know if you want this turned into a full markdown `.md` file or zipped with project scaffolding!
+
+
+
+
+// ruleEngineTradeTests.ts
+
+// Import rule engine and helper services
+import { Rule } from 'json-rules-engine';
+import RuleEngineWrapper from './ruleEngineWrapper';
+import { Logger } from './services/Logger';
+import { db } from './services/pgPromise';
+
+// Optional loader used in production, not required for this test
+import { InstrumentDataLoader } from './preloadInstrumentData';
+
+const logger = new Logger();
+const ruleEngineWrapper = new RuleEngineWrapper();
+
+/**
+ * BUSINESS RULES DEFINITION
+ * These are written in JSON logic format using json-rules-engine.
+ */
+const rules: Rule[] = [
+
+  // Rule 1: Firms must belong to the same market segment as the instruments
+  new Rule({
+    conditions: {
+      all: [
+        {
+          fact: 'unifiedMarketSegment', // a single segment for all legs
+          operator: 'notEqual',
+          value: null
+        },
+        {
+          fact: 'firmMarketSegmentMap', // map of firm to their segment
+          path: '$[*]',                 // check all firm mappings
+          operator: 'equal',
+          value: {
+            fact: 'unifiedMarketSegment' // expected to match the trade segment
+          }
+        }
+      ]
+    },
+    event: {
+      type: 'firmsMappedToUnifiedSegment',
+      params: { message: 'All firms exist and are mapped to the trade market segment' }
+    }
+  }),
+
+  // Rule 2: All contract series (leg symbols) must exist and belong to the same segment
+  new Rule({
+    conditions: {
+      all: [
+        {
+          fact: 'trade',
+          path: '$.legs[*].legSymbol',     // collect all leg symbols from the trade
+          operator: 'in',
+          value: {
+            fact: 'instruments',           // compare with all known instruments
+            path: '$[*].contract_series_code'
+          }
+        },
+        {
+          fact: 'marketSegments',          // ensure all segment codes are the same
+          path: '$[*]',
+          operator: 'equal',
+          value: {
+            fact: 'marketSegments',
+            path: '$[0]'                   // compare each with the first value
+          }
+        }
+      ]
+    },
+    event: {
+      type: 'uniformMarketSegment',
+      params: { message: 'All contract series belong to the same market segment and exist' }
+    }
+  })
+];
+
+/**
+ * Test utility: evaluates a given trade, firms, and instruments using our rule engine.
+ */
+export const runRuleTest = async (
+  trade: any,
+  mockFirms: any[],
+  mockInstruments: any[]
+): Promise<any[]> => {
+  // Find the market segments of all instruments in the trade legs
+  const marketSegments = trade.legs
+    .map((leg: any) => {
+      const match = mockInstruments.find((i: any) => i.contract_series_code === leg.legSymbol);
+      return match?.market_segment_code;
+    })
+    .filter((seg: any): seg is string => Boolean(seg)); // Remove undefineds
+
+  // Determine if all segments are the same
+  const unifiedMarketSegment = new Set(marketSegments).size === 1 ? marketSegments[0] : undefined;
+
+  // Map each firm to its market segment
+  const firmMarketSegmentMap: Record<string, string> = {};
+  for (const firm of mockFirms) {
+    firmMarketSegmentMap[firm.firm_code] = firm.market_segment_code;
+  }
+
+  // Build the full fact object to pass to the rule engine
+  const facts = {
+    trade,
+    firms: mockFirms,
+    instruments: mockInstruments,
+    marketSegments,
+    unifiedMarketSegment,
+    firmMarketSegmentMap
+  };
+
+  return ruleEngineWrapper.evaluateRules(rules, facts);
+};
+
+/**
+ * Jest test cases: covers both positive and negative scenarios
+ */
+describe('Trade Rule Engine Tests - All Scenarios', () => {
+
+  // ✅ Happy case: everything is valid
+  it('✅ should pass for valid trade', async () => {
+    const trade = {
+      legs: [
+        { legSymbol: 'CS1', sellSide: { sellerFirm: 'FirmA' }, buySide: { buyerFirm: 'FirmB' } },
+        { legSymbol: 'CS2', sellSide: { sellerFirm: 'FirmA' }, buySide: { buyerFirm: 'FirmB' } }
+      ]
+    };
+    const firms = [
+      { firm_code: 'FirmA', market_segment_code: 'MS1' },
+      { firm_code: 'FirmB', market_segment_code: 'MS1' }
+    ];
+    const instruments = [
+      { contract_series_code: 'CS1', market_segment_code: 'MS1' },
+      { contract_series_code: 'CS2', market_segment_code: 'MS1' }
+    ];
+    const results = await runRuleTest(trade, firms, instruments);
+    expect(results.find(e => e.type === 'firmsMappedToUnifiedSegment')).toBeDefined();
+    expect(results.find(e => e.type === 'uniformMarketSegment')).toBeDefined();
+  });
+
+  // ❌ Firms exist but mapped to different segments
+  it('❌ should fail if firm mapped to different segment', async () => {
+    const trade = {
+      legs: [
+        { legSymbol: 'CS1', sellSide: { sellerFirm: 'FirmA' }, buySide: { buyerFirm: 'FirmB' } }
+      ]
+    };
+    const firms = [
+      { firm_code: 'FirmA', market_segment_code: 'MS1' },
+      { firm_code: 'FirmB', market_segment_code: 'MS2' }
+    ];
+    const instruments = [
+      { contract_series_code: 'CS1', market_segment_code: 'MS1' }
+    ];
+    const results = await runRuleTest(trade, firms, instruments);
+    expect(results.find(e => e.type === 'firmsMappedToUnifiedSegment')).toBeUndefined();
+  });
+
+  // ❌ Contract series are from different market segments
+  it('❌ should fail if instruments belong to different segments', async () => {
+    const trade = {
+      legs: [
+        { legSymbol: 'CS1' },
+        { legSymbol: 'CS2' }
+      ]
+    };
+    const firms = [{ firm_code: 'FirmA', market_segment_code: 'MS1' }];
+    const instruments = [
+      { contract_series_code: 'CS1', market_segment_code: 'MS1' },
+      { contract_series_code: 'CS2', market_segment_code: 'MS2' }
+    ];
+    const results = await runRuleTest(trade, firms, instruments);
+    expect(results.find(e => e.type === 'uniformMarketSegment')).toBeUndefined();
+  });
+
+  // ❌ One leg symbol does not exist
+  it('❌ should fail if leg symbol is missing in instruments', async () => {
+    const trade = {
+      legs: [
+        { legSymbol: 'CS1' },
+        { legSymbol: 'CSX' } // CSX is not in instruments
+      ]
+    };
+    const firms = [{ firm_code: 'FirmA', market_segment_code: 'MS1' }];
+    const instruments = [{ contract_series_code: 'CS1', market_segment_code: 'MS1' }];
+    const results = await runRuleTest(trade, firms, instruments);
+    expect(results.find(e => e.type === 'uniformMarketSegment')).toBeUndefined();
+  });
+
+  // ❌ One or more firms are missing
+  it('❌ should fail if firm is not listed at all', async () => {
+    const trade = {
+      legs: [{ legSymbol: 'CS1', sellSide: { sellerFirm: 'FirmX' } }]
+    };
+    const firms = []; // Empty firm list
+    const instruments = [{ contract_series_code: 'CS1', market_segment_code: 'MS1' }];
+    const results = await runRuleTest(trade, firms, instruments);
+    expect(results.find(e => e.type === 'firmsMappedToUnifiedSegment')).toBeUndefined();
+  });
+
+  // ❌ Trade with no legs
+  it('❌ should fail if trade has no legs', async () => {
+    const trade = { legs: [] };
+    const firms = [{ firm_code: 'FirmA', market_segment_code: 'MS1' }];
+    const instruments = [{ contract_series_code: 'CS1', market_segment_code: 'MS1' }];
+    const results = await runRuleTest(trade, firms, instruments);
+    expect(results.length).toBe(0); // No rule should fire
+  });
+
+});
