@@ -3352,3 +3352,72 @@ describe('Array Custom Operators', () => {
 
 This setup will validate all array operators efficiently. Let me know if you need refinements or optimizations! 🚀
 
+
+
+import { Engine } from 'json-rules-engine';
+
+export const addArrayOperators = (engine: Engine) => {
+  // Ensure all values in an array are the same
+  engine.addOperator('arrayAllSame', (factValue: any[]) => {
+    if (!Array.isArray(factValue) || factValue.length === 0) return false;
+    return new Set(factValue).size === 1;
+  });
+
+  // Existing operators...
+};
+import { Engine } from 'json-rules-engine';
+import { addArrayOperators } from './arrayOperators';
+
+describe('Array Custom Operators', () => {
+  let engine: Engine;
+
+  beforeEach(() => {
+    engine = new Engine();
+    addArrayOperators(engine);
+  });
+
+  test('arrayAllSame - should return true when all elements are identical', async () => {
+    const facts = { arrayFact: ["SEG1", "SEG1", "SEG1"] };
+    const rule = {
+      conditions: { any: [{ fact: 'arrayFact', operator: 'arrayAllSame' }] },
+      event: { type: 'success' },
+    };
+    engine.addRule(rule);
+    const results = await engine.run(facts);
+    expect(results.events.length).toBe(1);
+  });
+
+  test('arrayAllSame - should return false when elements are different', async () => {
+    const facts = { arrayFact: ["SEG1", "SEG2", "SEG1"] };
+    const rule = {
+      conditions: { any: [{ fact: 'arrayFact', operator: 'arrayAllSame' }] },
+      event: { type: 'success' },
+    };
+    engine.addRule(rule);
+    const results = await engine.run(facts);
+    expect(results.events.length).toBe(0);
+  });
+
+  test('arrayAllSame - should return false for an empty array', async () => {
+    const facts = { arrayFact: [] };
+    const rule = {
+      conditions: { any: [{ fact: 'arrayFact', operator: 'arrayAllSame' }] },
+      event: { type: 'success' },
+    };
+    engine.addRule(rule);
+    const results = await engine.run(facts);
+    expect(results.events.length).toBe(0);
+  });
+
+  test('arrayAllSame - should return false if factValue is not an array', async () => {
+    const facts = { arrayFact: "SEG1" };
+    const rule = {
+      conditions: { any: [{ fact: 'arrayFact', operator: 'arrayAllSame' }] },
+      event: { type: 'success' },
+    };
+    engine.addRule(rule);
+    const results = await engine.run(facts);
+    expect(results.events.length).toBe(0);
+  });
+});
+
