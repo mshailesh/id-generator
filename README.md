@@ -3211,3 +3211,144 @@ Let me know if you'd like:
 - Real `pg-promise` integration for `FactService`
 - Auto-loading JSON rules from S3
 - CLI script to run tests or rules interactively
+
+
+
+Sure! Here are the **source file** and **test file** for your array operators using `json-rules-engine`.
+
+---
+
+### **`arrayOperators.ts` (Source File)**
+```typescript
+import { Engine } from 'json-rules-engine';
+
+export const addArrayOperators = (engine: Engine) => {
+  // Check if two arrays are strictly equal (same values, same order)
+  engine.addOperator('arrayEqual', (factValue: any[], jsonValue: any[]) => {
+    if (!Array.isArray(factValue) || !Array.isArray(jsonValue)) return false;
+    return factValue.length === jsonValue.length && factValue.every((val, index) => val === jsonValue[index]);
+  });
+
+  // Check if two arrays contain the same elements (ignoring order)
+  engine.addOperator('arraySameElements', (factValue: any[], jsonValue: any[]) => {
+    if (!Array.isArray(factValue) || !Array.isArray(jsonValue)) return false;
+    return factValue.length === jsonValue.length && factValue.sort().toString() === jsonValue.sort().toString();
+  });
+
+  // Check if fact array contains all elements of json array
+  engine.addOperator('arrayContainsAll', (factValue: any[], jsonValue: any[]) => {
+    if (!Array.isArray(factValue) || !Array.isArray(jsonValue)) return false;
+    return jsonValue.every(val => factValue.includes(val));
+  });
+
+  // Check if fact array contains any element of json array
+  engine.addOperator('arrayContainsAny', (factValue: any[], jsonValue: any[]) => {
+    if (!Array.isArray(factValue) || !Array.isArray(jsonValue)) return false;
+    return jsonValue.some(val => factValue.includes(val));
+  });
+
+  // Check if arrays have overlapping elements
+  engine.addOperator('arrayIntersects', (factValue: any[], jsonValue: any[]) => {
+    if (!Array.isArray(factValue) || !Array.isArray(jsonValue)) return false;
+    return factValue.some(val => jsonValue.includes(val));
+  });
+};
+```
+
+---
+
+### **`arrayOperators.test.ts` (Test File)**
+```typescript
+import { Engine } from 'json-rules-engine';
+import { addArrayOperators } from './arrayOperators';
+
+describe('Array Custom Operators', () => {
+  let engine: Engine;
+
+  beforeEach(() => {
+    engine = new Engine();
+    addArrayOperators(engine);
+  });
+
+  test('arrayEqual - should return true for identical arrays', async () => {
+    const facts = { arrayFact: [1, 2, 3] };
+    const rule = {
+      conditions: { any: [{ fact: 'arrayFact', operator: 'arrayEqual', value: [1, 2, 3] }] },
+      event: { type: 'success' },
+    };
+    engine.addRule(rule);
+    const results = await engine.run(facts);
+    expect(results.events.length).toBe(1);
+  });
+
+  test('arrayEqual - should return false for different arrays', async () => {
+    const facts = { arrayFact: [1, 2, 3] };
+    const rule = {
+      conditions: { any: [{ fact: 'arrayFact', operator: 'arrayEqual', value: [3, 2, 1] }] },
+      event: { type: 'success' },
+    };
+    engine.addRule(rule);
+    const results = await engine.run(facts);
+    expect(results.events.length).toBe(0);
+  });
+
+  test('arraySameElements - should return true for same elements ignoring order', async () => {
+    const facts = { arrayFact: ['a', 'b', 'c'] };
+    const rule = {
+      conditions: { any: [{ fact: 'arrayFact', operator: 'arraySameElements', value: ['b', 'c', 'a'] }] },
+      event: { type: 'success' },
+    };
+    engine.addRule(rule);
+    const results = await engine.run(facts);
+    expect(results.events.length).toBe(1);
+  });
+
+  test('arrayContainsAll - should return true when fact array contains all elements of rule array', async () => {
+    const facts = { arrayFact: [1, 2, 3, 4, 5] };
+    const rule = {
+      conditions: { any: [{ fact: 'arrayFact', operator: 'arrayContainsAll', value: [2, 3] }] },
+      event: { type: 'success' },
+    };
+    engine.addRule(rule);
+    const results = await engine.run(facts);
+    expect(results.events.length).toBe(1);
+  });
+
+  test('arrayContainsAny - should return true when fact array contains at least one element of rule array', async () => {
+    const facts = { arrayFact: [10, 20, 30, 40] };
+    const rule = {
+      conditions: { any: [{ fact: 'arrayFact', operator: 'arrayContainsAny', value: [30, 99] }] },
+      event: { type: 'success' },
+    };
+    engine.addRule(rule);
+    const results = await engine.run(facts);
+    expect(results.events.length).toBe(1);
+  });
+
+  test('arrayIntersects - should return true when arrays share at least one element', async () => {
+    const facts = { arrayFact: ['x', 'y', 'z'] };
+    const rule = {
+      conditions: { any: [{ fact: 'arrayFact', operator: 'arrayIntersects', value: ['y', 'q'] }] },
+      event: { type: 'success' },
+    };
+    engine.addRule(rule);
+    const results = await engine.run(facts);
+    expect(results.events.length).toBe(1);
+  });
+});
+```
+
+---
+
+### **Next Steps:**
+1. **Run the tests** using:
+   ```bash
+   npm test
+   ```
+2. **Ensure you have dependencies installed**, if needed:
+   ```bash
+   npm install --save-dev jest ts-jest @types/jest
+   ```
+
+This setup will validate all array operators efficiently. Let me know if you need refinements or optimizations! 🚀
+
