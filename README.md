@@ -3421,3 +3421,159 @@ describe('Array Custom Operators', () => {
   });
 });
 
+
+
+
+Here's the **JSON rule** and **Jest test cases** to validate that:
+1. **Each trade leg's buyer firm exists in the firm list** (`arrayContainsAny`).
+2. **The firm's market segment matches the trade leg's market segment** (`arrayContainsAll`).
+
+---
+
+### **JSON Rule**
+```json
+{
+  "conditions": {
+    "all": [
+      {
+        "fact": "trade",
+        "operator": "arrayContainsAny",
+        "path": "$.legs[*].buyer_firm",
+        "value": { "fact": "firms", "path": "$[*].firm_code" }
+      },
+      {
+        "fact": "trade",
+        "operator": "arrayContainsAll",
+        "path": "$.legs[*].market_segment",
+        "value": {
+          "fact": "firms",
+          "path": "$[?(@.firm_code in trade.legs[*].buyer_firm)].market_segment"
+        }
+      }
+    ]
+  },
+  "event": {
+    "type": "marketSegmentValidationSuccess",
+    "params": {
+      "message": "Each trade leg's buyer firm exists and has a valid market segment."
+    }
+  }
+}
+```
+
+---
+
+### **Jest Test Cases (`tradeValidation.test.ts`)**
+```typescript
+import { Engine } from 'json-rules-engine';
+import { addArrayOperators } from './arrayOperators';
+
+describe('Trade Leg Buyer Firm and Market Segment Validation', () => {
+  let engine: Engine;
+
+  beforeEach(() => {
+    engine = new Engine();
+    addArrayOperators(engine);
+  });
+
+  test('should pass when each buyer firm exists and matches the market segment', async () => {
+    const facts = {
+      trade: {
+        legs: [
+          { buyer_firm: "JPM_AU", market_segment: "AU" },
+          { buyer_firm: "BNZ_NZ", market_segment: "NZ" }
+        ]
+      },
+      firms: [
+        { firm_code: "JPM_AU", market_segment: "AU" },
+        { firm_code: "BNZ_NZ", market_segment: "NZ" }
+      ]
+    };
+
+    const rule = {
+      conditions: {
+        all: [
+          {
+            fact: "trade",
+            operator: "arrayContainsAny",
+            path: "$.legs[*].buyer_firm",
+            value: { fact: "firms", path: "$[*].firm_code" }
+          },
+          {
+            fact: "trade",
+            operator: "arrayContainsAll",
+            path: "$.legs[*].market_segment",
+            value: {
+              fact: "firms",
+              path: "$[?(@.firm_code in trade.legs[*].buyer_firm)].market_segment"
+            }
+          }
+        ]
+      },
+      event: { type: "marketSegmentValidationSuccess" }
+    };
+
+    engine.addRule(rule);
+    const results = await engine.run(facts);
+    expect(results.events.length).toBe(1); // ✅ Should pass
+  });
+
+  test('should fail when a buyer firm exists but has a different market segment', async () => {
+    const facts = {
+      trade: {
+        legs: [
+          { buyer_firm: "JPM_AU", market_segment: "AU" },
+          { buyer_firm: "BNZ_AU", market_segment: "NZ" } // ❌ Incorrect mapping
+        ]
+      },
+      firms: [
+        { firm_code: "JPM_AU", market_segment: "AU" },
+        { firm_code: "BNZ_AU", market_segment: "AU" } // ❌ Missing "NZ"
+      ]
+    };
+
+    const rule = {
+      conditions: {
+        all: [
+          {
+            fact: "trade",
+            operator: "arrayContainsAny",
+            path: "$.legs[*].buyer_firm",
+            value: { fact: "firms", path: "$[*].firm_code" }
+          },
+          {
+            fact: "trade",
+            operator: "arrayContainsAll",
+            path: "$.legs[*].market_segment",
+            value: {
+              fact: "firms",
+              path: "$[?(@.firm_code in trade.legs[*].buyer_firm)].market_segment"
+            }
+          }
+        ]
+      },
+      event: { type: "marketSegmentValidationSuccess" }
+    };
+
+    engine.addRule(rule);
+    const results = await engine.run(facts);
+    expect(results.events.length).toBe(0); // ❌ Should fail
+  });
+});
+```
+
+---
+
+### **How This Works**
+- **Validates buyer firms exist in firms list** → `arrayContainsAny` on firm codes.
+- **Ensures firms mapped to buyer firms have the correct market segment** → `arrayContainsAll`.
+- **Uses JSONPath filtering** → `$[?(@.firm_code in trade.legs[*].buyer_firm)]`.
+
+---
+
+### **Expected Behavior**
+✅ **Passes** when all buyer firms exist **and match the correct market segment**.  
+❌ **Fails** if a buyer firm exists **but does not match the market segment**.
+
+This ensures strict validation for trade legs and buyer firms within firms, using your defined operators. 🚀 Let me know if you'd like further refinements!
+
