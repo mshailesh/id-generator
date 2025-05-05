@@ -3576,42 +3576,14 @@ describe('Trade Leg Buyer Firm and Market Segment Validation', () => {
 ❌ **Fails** if a buyer firm exists **but does not match the market segment**.
 
 This ensures strict validation for trade legs and buyer firms within firms, using your defined operators. 🚀 Let me know if you'd like further refinements!
-
-
-
-Here are **three separate files**:  
-1️⃣ **Time Comparison Operator** (`timeOperator.ts`)  
-2️⃣ **Time Extraction Function** (`timeUtils.ts`)  
+Here’s everything together:  
+1️⃣ **Time Extraction & Conversion Function** (`timeUtils.ts`)  
+2️⃣ **Custom Time Comparison Operators** (`timeOperator.ts`)  
 3️⃣ **Jest Test Case for Both** (`timeUtils.test.ts`)  
 
 ---
 
-### **1️⃣ Custom Time Comparison Operator (`timeOperator.ts`)**
-```typescript
-import { Engine } from "json-rules-engine";
-
-// Initialize JSON rules engine
-const engine = new Engine();
-
-// Custom operator for comparing times in format `hh:mm:ss`
-engine.addOperator("timeCompare", (factValue: string, ruleValue: string) => {
-    const timeToSeconds = (time: string) => {
-        const [hh, mm, ss] = time.split(":").map(Number);
-        return hh * 3600 + mm * 60 + ss;
-    };
-
-    return timeToSeconds(factValue) >= timeToSeconds(ruleValue);
-});
-
-export default engine;
-```
-✔ **Adds a custom operator `timeCompare` to JSON rules engine.**  
-✔ **Converts `hh:mm:ss` to seconds for accurate comparisons.**  
-✔ **Checks if fact time is `>=` rule value.**
-
----
-
-### **2️⃣ Time Extraction & Conversion Function (`timeUtils.ts`)**
+### **1️⃣ Time Extraction & Conversion Function (`timeUtils.ts`)**
 ```typescript
 import { format } from "date-fns";
 import { utcToZonedTime } from "date-fns-tz";
@@ -3633,9 +3605,50 @@ export function extractTimeAndConvert(timeString: string, targetTZ: "AU" | "NZ")
     return format(convertedTime, "HH:mm:ss");
 }
 ```
-✔ **Extracts only time (`HH:mm:ss`) from a timestamp.**  
-✔ **Handles timezone conversion (`AU → NZ`).**  
-✔ **Uses `date-fns-tz` for accurate time adjustments.**
+✅ **Extracts only time (`HH:mm:ss`) from timestamp.**  
+✅ **Handles timezone conversion (`AU → NZ`).**  
+✅ **Uses `date-fns-tz` for accurate time adjustments.**  
+
+---
+
+### **2️⃣ Custom Time Comparison Operators (`timeOperator.ts`)**
+```typescript
+import { Engine } from "json-rules-engine";
+
+// Initialize JSON rules engine
+const engine = new Engine();
+
+// Helper function to convert time `hh:mm:ss` to total seconds
+const timeToSeconds = (time: string): number => {
+    const [hh, mm, ss] = time.split(":").map(Number);
+    return hh * 3600 + mm * 60 + ss;
+};
+
+// Define multiple comparison operators
+engine.addOperator("timeGreaterThan", (factValue: string, ruleValue: string) => {
+    return timeToSeconds(factValue) > timeToSeconds(ruleValue);
+});
+
+engine.addOperator("timeGreaterThanOrEqual", (factValue: string, ruleValue: string) => {
+    return timeToSeconds(factValue) >= timeToSeconds(ruleValue);
+});
+
+engine.addOperator("timeLessThan", (factValue: string, ruleValue: string) => {
+    return timeToSeconds(factValue) < timeToSeconds(ruleValue);
+});
+
+engine.addOperator("timeLessThanOrEqual", (factValue: string, ruleValue: string) => {
+    return timeToSeconds(factValue) <= timeToSeconds(ruleValue);
+});
+
+engine.addOperator("timeEqual", (factValue: string, ruleValue: string) => {
+    return timeToSeconds(factValue) === timeToSeconds(ruleValue);
+});
+
+export default engine;
+```
+✅ **Supports comparisons for `>` `>=` `<` `<=` `===` using time in `hh:mm:ss` format.**  
+✅ **Converts time to total seconds for precise validation.**  
 
 ---
 
@@ -3655,12 +3668,12 @@ describe("Time Extraction and Conversion", () => {
 });
 
 describe("Time Comparison Operator", () => {
-    test("Trade time is valid", async () => {
+    test("Trade time is valid (>= 08:30:00)", async () => {
         const facts = { trade_time: "09:15:30" };
         const rule = {
             conditions: {
                 all: [
-                    { fact: "trade_time", operator: "timeCompare", value: "08:30:00" }
+                    { fact: "trade_time", operator: "timeGreaterThanOrEqual", value: "08:30:00" }
                 ]
             },
             event: { type: "timeValidationSuccess" }
@@ -3673,12 +3686,12 @@ describe("Time Comparison Operator", () => {
         expect(results.events[0].type).toBe("timeValidationSuccess");
     });
 
-    test("Trade time is invalid", async () => {
+    test("Trade time is invalid (< 08:30:00)", async () => {
         const facts = { trade_time: "07:15:30" };
         const rule = {
             conditions: {
                 all: [
-                    { fact: "trade_time", operator: "timeCompare", value: "08:30:00" }
+                    { fact: "trade_time", operator: "timeGreaterThanOrEqual", value: "08:30:00" }
                 ]
             },
             event: { type: "timeValidationFailure" }
@@ -3689,14 +3702,33 @@ describe("Time Comparison Operator", () => {
 
         expect(results.events.length).toBe(0); // Should not trigger validation
     });
+
+    test("Trade time must match exactly `10:00:00`", async () => {
+        const facts = { trade_time: "10:00:00" };
+        const rule = {
+            conditions: {
+                all: [
+                    { fact: "trade_time", operator: "timeEqual", value: "10:00:00" }
+                ]
+            },
+            event: { type: "exactTimeMatchSuccess" }
+        };
+
+        engine.addRule(rule);
+        const results = await engine.run(facts);
+
+        expect(results.events.length).toBe(1);
+        expect(results.events[0].type).toBe("exactTimeMatchSuccess");
+    });
 });
 ```
-✔ **Tests both time extraction and conversion (`AU → NZ`).**  
-✔ **Validates the custom `timeCompare` operator using Jest.**  
-✔ **Ensures the trade time comparison works correctly.**  
+
+✅ **Tests both time extraction and conversion (`AU → NZ`).**  
+✅ **Validates the custom operators for time comparison.**  
+✅ **Ensures trade time matches expected thresholds and exact values.**  
 
 ---
 
 ### **Would You Like Additional Edge Case Handling?**
-🚀 Let me know if you'd like refinements for **daylight savings, time ranges, or more test cases!**  
+🚀 Let me know if you need refinements for **invalid time formats, daylight savings, or extended comparisons!**  
 Or if you need a **PostgreSQL version**, I can help with that too.
