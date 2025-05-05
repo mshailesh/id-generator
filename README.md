@@ -1699,9 +1699,9 @@ class FactService {
 
         return row[field]; // Default for other fields
       });
+        logger.debug('Executing MERGE query', { query, values });
 
       try {
-        logger.debug('Executing MERGE query', { query, values });
         await this.db.none(query, values);
       } catch (error) {
         logger.error('Error executing MERGE query', { error, row });
@@ -3577,3 +3577,126 @@ describe('Trade Leg Buyer Firm and Market Segment Validation', () => {
 
 This ensures strict validation for trade legs and buyer firms within firms, using your defined operators. 🚀 Let me know if you'd like further refinements!
 
+
+
+Here are **three separate files**:  
+1️⃣ **Time Comparison Operator** (`timeOperator.ts`)  
+2️⃣ **Time Extraction Function** (`timeUtils.ts`)  
+3️⃣ **Jest Test Case for Both** (`timeUtils.test.ts`)  
+
+---
+
+### **1️⃣ Custom Time Comparison Operator (`timeOperator.ts`)**
+```typescript
+import { Engine } from "json-rules-engine";
+
+// Initialize JSON rules engine
+const engine = new Engine();
+
+// Custom operator for comparing times in format `hh:mm:ss`
+engine.addOperator("timeCompare", (factValue: string, ruleValue: string) => {
+    const timeToSeconds = (time: string) => {
+        const [hh, mm, ss] = time.split(":").map(Number);
+        return hh * 3600 + mm * 60 + ss;
+    };
+
+    return timeToSeconds(factValue) >= timeToSeconds(ruleValue);
+});
+
+export default engine;
+```
+✔ **Adds a custom operator `timeCompare` to JSON rules engine.**  
+✔ **Converts `hh:mm:ss` to seconds for accurate comparisons.**  
+✔ **Checks if fact time is `>=` rule value.**
+
+---
+
+### **2️⃣ Time Extraction & Conversion Function (`timeUtils.ts`)**
+```typescript
+import { format } from "date-fns";
+import { utcToZonedTime } from "date-fns-tz";
+
+const timeZoneMap: Record<string, string> = {
+    "AU": "Australia/Sydney",
+    "NZ": "Pacific/Auckland"
+};
+
+/**
+ * Extracts only the time (`HH:mm:ss`) and converts AU to NZ timezone if needed.
+ * @param {string} timeString - Date-time string in format `yyyy-MM-dd HH:mm:ss`
+ * @param {string} targetTZ - Target timezone ("AU" or "NZ")
+ * @returns {string} Time in `HH:mm:ss` format
+ */
+export function extractTimeAndConvert(timeString: string, targetTZ: "AU" | "NZ"): string {
+    const auTime = utcToZonedTime(new Date(timeString), timeZoneMap["AU"]);
+    const convertedTime = utcToZonedTime(auTime, timeZoneMap[targetTZ]);
+    return format(convertedTime, "HH:mm:ss");
+}
+```
+✔ **Extracts only time (`HH:mm:ss`) from a timestamp.**  
+✔ **Handles timezone conversion (`AU → NZ`).**  
+✔ **Uses `date-fns-tz` for accurate time adjustments.**
+
+---
+
+### **3️⃣ Jest Test Case (`timeUtils.test.ts`)**
+```typescript
+import { extractTimeAndConvert } from "./timeUtils";
+import engine from "./timeOperator";
+
+describe("Time Extraction and Conversion", () => {
+    test("Extract time from AU timestamp", () => {
+        expect(extractTimeAndConvert("2020-10-30 01:40:14", "AU")).toBe("01:40:14");
+    });
+
+    test("Convert AU time to NZ timezone", () => {
+        expect(extractTimeAndConvert("2020-10-30 01:40:14", "NZ")).toBe("03:40:14"); // Adjusted for timezone shift
+    });
+});
+
+describe("Time Comparison Operator", () => {
+    test("Trade time is valid", async () => {
+        const facts = { trade_time: "09:15:30" };
+        const rule = {
+            conditions: {
+                all: [
+                    { fact: "trade_time", operator: "timeCompare", value: "08:30:00" }
+                ]
+            },
+            event: { type: "timeValidationSuccess" }
+        };
+
+        engine.addRule(rule);
+        const results = await engine.run(facts);
+
+        expect(results.events.length).toBe(1);
+        expect(results.events[0].type).toBe("timeValidationSuccess");
+    });
+
+    test("Trade time is invalid", async () => {
+        const facts = { trade_time: "07:15:30" };
+        const rule = {
+            conditions: {
+                all: [
+                    { fact: "trade_time", operator: "timeCompare", value: "08:30:00" }
+                ]
+            },
+            event: { type: "timeValidationFailure" }
+        };
+
+        engine.addRule(rule);
+        const results = await engine.run(facts);
+
+        expect(results.events.length).toBe(0); // Should not trigger validation
+    });
+});
+```
+✔ **Tests both time extraction and conversion (`AU → NZ`).**  
+✔ **Validates the custom `timeCompare` operator using Jest.**  
+✔ **Ensures the trade time comparison works correctly.**  
+
+---
+
+### **Would You Like Additional Edge Case Handling?**
+🚀 Let me know if you'd like refinements for **daylight savings, time ranges, or more test cases!**  
+Or if you need a **PostgreSQL version**, I can help with that too.
