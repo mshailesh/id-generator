@@ -3732,3 +3732,167 @@ describe("Time Comparison Operator", () => {
 ### **Would You Like Additional Edge Case Handling?**
 🚀 Let me know if you need refinements for **invalid time formats, daylight savings, or extended comparisons!**  
 Or if you need a **PostgreSQL version**, I can help with that too.
+
+
+
+Perfect! Here's just the **`arrayCountEquals` operator** and a **unit test** using plain Node.js and Jest (or any test runner).
+
+---
+
+## ✅ 1. Operator Only
+
+```ts
+// array-operators.ts
+import { Engine } from 'json-rules-engine';
+
+export const addArrayOperators = (engine: Engine) => {
+  engine.addOperator(
+    'arrayCountEquals',
+    (factValue: any[], jsonValue: { value: number; match: Record<string, any> }) => {
+      if (!Array.isArray(factValue) || typeof jsonValue !== 'object') return false;
+
+      const { value: expectedCount, match } = jsonValue;
+      if (typeof expectedCount !== 'number' || typeof match !== 'object') return false;
+
+      const actualCount = factValue.filter(item =>
+        Object.entries(match).every(([key, val]) => item[key] === val)
+      ).length;
+
+      return actualCount === expectedCount;
+    }
+  );
+};
+```
+
+---
+
+## ✅ 2. Unit Test (Jest Example)
+
+```ts
+// array-operators.test.ts
+import { Engine } from 'json-rules-engine';
+import { addArrayOperators } from './array-operators';
+
+describe('arrayCountEquals operator', () => {
+  let engine: Engine;
+
+  beforeEach(() => {
+    engine = new Engine();
+    addArrayOperators(engine);
+  });
+
+  test('triggers when exactly one match exists', async () => {
+    engine.addRule({
+      conditions: {
+        all: [
+          {
+            fact: 'users',
+            operator: 'arrayCountEquals',
+            value: {
+              value: 1,
+              match: { status: 'inactive' }
+            }
+          }
+        ]
+      },
+      event: {
+        type: 'matched',
+        params: { message: 'Exactly one inactive user' }
+      }
+    });
+
+    const facts = {
+      users: [
+        { id: 1, status: 'active' },
+        { id: 2, status: 'inactive' },
+        { id: 3, status: 'active' }
+      ]
+    };
+
+    const { events } = await engine.run(facts);
+    expect(events).toHaveLength(1);
+    expect(events[0].params.message).toBe('Exactly one inactive user');
+  });
+
+  test('does not trigger when no match exists', async () => {
+    engine.addRule({
+      conditions: {
+        all: [
+          {
+            fact: 'users',
+            operator: 'arrayCountEquals',
+            value: {
+              value: 1,
+              match: { status: 'inactive' }
+            }
+          }
+        ]
+      },
+      event: {
+        type: 'matched',
+        params: { message: 'Exactly one inactive user' }
+      }
+    });
+
+    const facts = {
+      users: [
+        { id: 1, status: 'active' },
+        { id: 2, status: 'active' }
+      ]
+    };
+
+    const { events } = await engine.run(facts);
+    expect(events).toHaveLength(0);
+  });
+
+  test('does not trigger when more than one match exists', async () => {
+    engine.addRule({
+      conditions: {
+        all: [
+          {
+            fact: 'users',
+            operator: 'arrayCountEquals',
+            value: {
+              value: 1,
+              match: { status: 'inactive' }
+            }
+          }
+        ]
+      },
+      event: {
+        type: 'matched',
+        params: { message: 'Exactly one inactive user' }
+      }
+    });
+
+    const facts = {
+      users: [
+        { id: 1, status: 'inactive' },
+        { id: 2, status: 'inactive' },
+        { id: 3, status: 'active' }
+      ]
+    };
+
+    const { events } = await engine.run(facts);
+    expect(events).toHaveLength(0);
+  });
+});
+```
+
+---
+
+## 🧪 Run Test
+
+If you're using Jest:
+
+```bash
+npx jest array-operators.test.ts
+```
+
+---
+
+Let me know if you also want to test:
+
+* Nested field matching (e.g., `user.meta.status`)
+* Greater than or less than count (e.g., `arrayCountGreaterThan`)
+
