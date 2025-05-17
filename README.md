@@ -3896,3 +3896,123 @@ Let me know if you also want to test:
 * Nested field matching (e.g., `user.meta.status`)
 * Greater than or less than count (e.g., `arrayCountGreaterThan`)
 
+
+
+
+
+Got it! You want to process **a list of fields** for validation, ensuring that:
+1. **Fields are stored properly in the validation result** for successes and warnings.
+2. **For failures**, we extract the actual values from the payload that caused the validation issue.
+
+### **Updated Validation Result Structure**
+```typescript
+interface ValidationDetail {
+  level: 'trade' | 'leg';
+  severity: 'success' | 'warning' | 'error';
+  message: string;
+  fields: string[]; // Now storing multiple fields that were checked
+  legId?: string;
+  failedValues?: Record<string, any>; // Stores actual values for failed fields
+}
+
+interface ValidationResult {
+  tradeId: string;
+  status: 'success' | 'warning' | 'error';
+  successEvents: ValidationDetail[];
+  warningEvents: ValidationDetail[];
+  failureEvents: ValidationDetail[];
+}
+```
+
+### **Processing Logic for Field Extraction**
+```typescript
+const processValidationResult = (engineResult: any, tradeId: string, payload: any): ValidationResult => {
+  const successEvents: ValidationDetail[] = [];
+  const warningEvents: ValidationDetail[] = [];
+  const failureEvents: ValidationDetail[] = [];
+
+  // Process success and warning events
+  engineResult.events.forEach((event: any) => {
+    const detail = {
+      level: event.params.level || 'trade',
+      severity: event.params.severity || 'success',
+      message: event.params.message,
+      fields: event.params.fields || [], // Store list of fields checked
+      legId: event.params.legId,
+    };
+
+    if (detail.severity === 'success') {
+      successEvents.push(detail);
+    } else if (detail.severity === 'warning') {
+      warningEvents.push(detail);
+    }
+  });
+
+  // Process failure events separately (extract values from payload)
+  engineResult.failureEvents.forEach((event: any) => {
+    const failedValues: Record<string, any> = {};
+
+    // Extract actual field values from the payload
+    event.params.fields?.forEach((field: string) => {
+      failedValues[field] = payload[field] || null;
+    });
+
+    failureEvents.push({
+      level: event.params.level || 'trade',
+      severity: 'error',
+      message: event.params.message,
+      fields: event.params.fields || [],
+      legId: event.params.legId,
+      failedValues, // Add extracted field values
+    });
+  });
+
+  // Determine overall status **without failure events affecting it**
+  const status = warningEvents.length > 0 ? 'warning' : 'success';
+
+  return { tradeId, status, successEvents, warningEvents, failureEvents };
+};
+```
+
+### **Example Output**
+```json
+{
+  "tradeId": "T12345",
+  "status": "warning",
+  "successEvents": [
+    {
+      "level": "trade",
+      "severity": "success",
+      "message": "Trade type is valid",
+      "fields": ["tradeType"]
+    }
+  ],
+  "warningEvents": [
+    {
+      "level": "leg",
+      "severity": "warning",
+      "message": "Leg price is unusually high",
+      "fields": ["price"],
+      "legId": "L67890"
+    }
+  ],
+  "failureEvents": [
+    {
+      "level": "trade",
+      "severity": "error",
+      "message": "Trade date is missing",
+      "fields": ["tradeDate"],
+      "failedValues": {
+        "tradeDate": null
+      }
+    }
+  ]
+}
+```
+
+### **Key Enhancements**
+✅ **Stores a list of validated fields for each event**  
+✅ **Failure results include actual values that caused validation errors**  
+✅ **Separates success, warnings, and failures for easy debugging**  
+
+Would you like refinements, such as **field suggestions for fixing errors** or **logging enhancements**? 🚀
