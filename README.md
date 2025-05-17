@@ -3900,33 +3900,11 @@ Let me know if you also want to test:
 
 
 
-Got it! You want to process **a list of fields** for validation, ensuring that:
-1. **Fields are stored properly in the validation result** for successes and warnings.
-2. **For failures**, we extract the actual values from the payload that caused the validation issue.
+You're right! Instead of just tracking the fields, we should dynamically extract all **remaining parameters** from `engineResult` failure events, ensuring they’re properly included in the validation result.
 
-### **Updated Validation Result Structure**
+### **Updated Processing Logic**
 ```typescript
-interface ValidationDetail {
-  level: 'trade' | 'leg';
-  severity: 'success' | 'warning' | 'error';
-  message: string;
-  fields: string[]; // Now storing multiple fields that were checked
-  legId?: string;
-  failedValues?: Record<string, any>; // Stores actual values for failed fields
-}
-
-interface ValidationResult {
-  tradeId: string;
-  status: 'success' | 'warning' | 'error';
-  successEvents: ValidationDetail[];
-  warningEvents: ValidationDetail[];
-  failureEvents: ValidationDetail[];
-}
-```
-
-### **Processing Logic for Field Extraction**
-```typescript
-const processValidationResult = (engineResult: any, tradeId: string, payload: any): ValidationResult => {
+const processValidationResult = (engineResult: any, tradeId: string): ValidationResult => {
   const successEvents: ValidationDetail[] = [];
   const warningEvents: ValidationDetail[] = [];
   const failureEvents: ValidationDetail[] = [];
@@ -3937,7 +3915,7 @@ const processValidationResult = (engineResult: any, tradeId: string, payload: an
       level: event.params.level || 'trade',
       severity: event.params.severity || 'success',
       message: event.params.message,
-      fields: event.params.fields || [], // Store list of fields checked
+      fields: event.params.fields || [], // Store list of validated fields
       legId: event.params.legId,
     };
 
@@ -3948,26 +3926,19 @@ const processValidationResult = (engineResult: any, tradeId: string, payload: an
     }
   });
 
-  // Process failure events separately (extract values from payload)
+  // Include all remaining parameters in failure results
   engineResult.failureEvents.forEach((event: any) => {
-    const failedValues: Record<string, any> = {};
-
-    // Extract actual field values from the payload
-    event.params.fields?.forEach((field: string) => {
-      failedValues[field] = payload[field] || null;
-    });
-
     failureEvents.push({
       level: event.params.level || 'trade',
       severity: 'error',
       message: event.params.message,
       fields: event.params.fields || [],
       legId: event.params.legId,
-      failedValues, // Add extracted field values
+      ...event.params, // Dynamically include all additional parameters
     });
   });
 
-  // Determine overall status **without failure events affecting it**
+  // Effective status calculated **only from success and warning events**
   const status = warningEvents.length > 0 ? 'warning' : 'success';
 
   return { tradeId, status, successEvents, warningEvents, failureEvents };
@@ -4002,17 +3973,17 @@ const processValidationResult = (engineResult: any, tradeId: string, payload: an
       "severity": "error",
       "message": "Trade date is missing",
       "fields": ["tradeDate"],
-      "failedValues": {
-        "tradeDate": null
-      }
+      "tradeDate": "2024-10-18", // Dynamically included from event params
+      "additionalParam1": "XYZ",
+      "additionalParam2": 1234
     }
   ]
 }
 ```
 
 ### **Key Enhancements**
-✅ **Stores a list of validated fields for each event**  
-✅ **Failure results include actual values that caused validation errors**  
-✅ **Separates success, warnings, and failures for easy debugging**  
+✅ **Automatically includes all remaining parameters from failure events**  
+✅ **Ensures a structured output while keeping reference failures separate**  
+✅ **Maintains clean separation between success, warnings, and failures**  
 
-Would you like refinements, such as **field suggestions for fixing errors** or **logging enhancements**? 🚀
+Would you like to refine this further with **error codes or standardized messages**? 🚀
