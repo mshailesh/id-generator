@@ -3987,3 +3987,29 @@ const processValidationResult = (engineResult: any, tradeId: string): Validation
 ✅ **Maintains clean separation between success, warnings, and failures**  
 
 Would you like to refine this further with **error codes or standardized messages**? 🚀
+
+
+function validateTradeLegPrices(trades: Trade[], instruments: Instrument[]): Trade[] {
+  const instrumentMap = new Map<string, number>();
+  
+  // Build a quick lookup map for instrument increments
+  instruments.forEach(inst => {
+    instrumentMap.set(inst.instrumentId, inst.increment);
+  });
+
+  return trades.map(trade => {
+    const updatedLegs = trade.legs.map(leg => {
+      const increment = instrumentMap.get(leg.instrumentId);
+      const isDivisible = increment ? (leg.price % increment === 0) : false;
+      return {
+        ...leg,
+        isPriceDivisible: isDivisible
+      };
+    });
+
+    return {
+      ...trade,
+      legs: updatedLegs
+    };
+  });
+}
