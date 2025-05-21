@@ -4047,3 +4047,20 @@ export function validateAndExtractPayload(event: EventBridgeEvent<"TradeEvent", 
     }
 }
 
+import express from "express";
+import { handler } from "../handlers/lambdaHandler";
+
+const app = express();
+app.use(express.json());
+
+app.post("/business-rules/event", async (req, res) => {
+    try {
+        const result = await handler(req.body as any, {} as any);
+        res.status(200).json(result);
+    } catch (error) {
+        res.status(500).json({ error: "Failed to process event", details: error.message });
+    }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Express server running on port ${PORT}`));
