@@ -4013,3 +4013,37 @@ function validateTradeLegPrices(trades: Trade[], instruments: Instrument[]): Tra
     };
   });
 }
+
+
+
+
+import { EventBridgeEvent, APIGatewayProxyEvent } from "aws-lambda";
+
+export function validateAndExtractPayload(event: EventBridgeEvent<"TradeEvent", any> | APIGatewayProxyEvent): any {
+    if ("source" in event) {
+        // EventBridge event → validate source
+        if (!event.source || event.source !== "aws.events") {
+            throw new Error(`Invalid event source: ${event.source}`);
+        }
+
+        if (!event.detail) {
+            throw new Error("EventBridge event is missing 'detail'");
+        }
+
+        return event.detail;
+    } else if ("body" in event) {
+        // API Gateway event → parse body safely
+        if (!event.body) {
+            throw new Error("API Gateway event is missing 'body'");
+        }
+
+        try {
+            return JSON.parse(event.body);
+        } catch (error) {
+            throw new Error("Invalid JSON format in API Gateway body");
+        }
+    } else {
+        throw new Error("Unknown event format: missing 'source' or 'body'");
+    }
+}
+
