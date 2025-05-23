@@ -4064,3 +4064,52 @@ app.post("/business-rules/event", async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Express server running on port ${PORT}`));
+
+
+Here’s your **updated annual self-review** with the additional point about participating in the architecture forum:
+
+---
+
+### 🛠️ **Technical Contributions & Delivery**
+
+* Among the first developers on the project; established the local development environment by identifying software access issues and documenting solutions in Confluence — now the go-to guide for new developers.
+* Analyzed requirements and led initial estimations for the FIX Gateway component, later refining them with a simpler and more efficient solution.
+* Worked closely with the CHESS team to quickly ramp up on FIX Gateway concepts, enabling a deep understanding and faster delivery within a short timeframe.
+* Designed and developed a fit-for-purpose FIX Gateway, driving refactoring and integration efforts while collaborating with partner teams and stakeholders.
+* Proactively developed a reusable Kafka wrapper library, which is now used across multiple Kafka-based implementations.
+* Successfully owned and delivered the complex Business Rule Engine component, ensuring extensibility, performance, and robustness.
+* Completed the rule engine library and integrated it with prefiltering and execution Lambdas, enabling timely availability for testing.
+
+---
+
+### 💡 **Design & Architecture**
+
+* Actively contributed to both high-level and low-level design discussions, providing actionable feedback and driving continuous improvements.
+* Participated in the organization’s Architecture Forum, regularly contributing to discussions and sharing practical insights from implementation experience.
+* Provided architectural input to ensure maintainability, scalability, and reusability across core components.
+
+---
+
+### ⚙️ **DevOps & Infrastructure**
+
+* Worked actively with DevOps to provide input on infrastructure setup, deployment automation, and platform best practices.
+* Ensured alignment between development tooling and long-term maintainability and operational excellence.
+
+---
+
+### 🤝 **Collaboration & Mentorship**
+
+* Consistently performed thorough code reviews and provided constructive feedback to ensure high-quality deliverables.
+* Mentored new joiners and junior developers, supporting fast onboarding and knowledge transfer.
+* Played an active role in fostering a strong and collaborative team culture.
+
+---
+
+### 🌐 **Cross-Team Engagement**
+
+* Actively supported NRTC developers beyond the TradeAccept domain by sharing FIX Gateway knowledge and FIX pattern best practices for wider adoption.
+
+---
+
+Let me know if you want a summary version, a narrative paragraph form, or a self-rating section to pair with it.
+
