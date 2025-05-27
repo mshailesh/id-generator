@@ -4208,3 +4208,89 @@ Would you like to share:
 That will help me narrow down the fix more precisely.
 
 
+If you're using `lambda.invoke()` in TypeScript (Node.js app) and want to **invoke another Lambda and return its response cleanly** (decoded, JSON parsed, and usable), here's exactly how to do it.
+
+---
+
+## ✅ Final Version: Invoke Lambda and Return Response (TypeScript)
+
+```ts
+import AWS from 'aws-sdk';
+
+// Create Lambda client
+const lambda = new AWS.Lambda({ region: 'your-region' });
+
+export async function callAnotherLambdaAndReturn() {
+  const params = {
+    FunctionName: 'your-lambda-function-name',
+    InvocationType: 'RequestResponse', // Synchronous invocation
+    Payload: JSON.stringify({ key: 'value' }), // Input to the other Lambda
+  };
+
+  try {
+    const response = await lambda.invoke(params).promise();
+
+    if (!response.Payload) {
+      throw new Error('Empty response from Lambda');
+    }
+
+    // Convert Buffer (or string) to string
+    const rawPayload = Buffer.isBuffer(response.Payload)
+      ? response.Payload.toString('utf-8')
+      : response.Payload;
+
+    // Parse JSON
+    const parsed = JSON.parse(rawPayload as string);
+
+    // Handle case where Lambda returns an API Gateway-style response
+    if (parsed.isBase64Encoded && parsed.body) {
+      const decodedBody = Buffer.from(parsed.body, 'base64').toString('utf-8');
+      return JSON.parse(decodedBody);
+    }
+
+    // Otherwise just return the parsed result
+    return parsed;
+
+  } catch (err) {
+    console.error('Lambda invoke failed:', err);
+    throw err;
+  }
+}
+```
+
+---
+
+## ✅ Example Use:
+
+```ts
+(async () => {
+  const result = await callAnotherLambdaAndReturn();
+  console.log('Lambda result:', result);
+})();
+```
+
+---
+
+## 🧠 Quick Tips
+
+* If you're invoking a Lambda that uses **API Gateway proxy integration**, its response might be:
+
+  ```json
+  {
+    "statusCode": 200,
+    "headers": {},
+    "body": "base64-encoded string",
+    "isBase64Encoded": true
+  }
+  ```
+
+  Hence the check for `isBase64Encoded`.
+
+* If it's a direct Lambda, just return plain objects and avoid Buffers/Streams.
+
+---
+
+Would you like help formatting the Lambda you're invoking, so it always returns UTF-8 JSON?
+
+
+
