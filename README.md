@@ -4113,3 +4113,98 @@ Here’s your **updated annual self-review** with the additional point about par
 
 Let me know if you want a summary version, a narrative paragraph form, or a self-rating section to pair with it.
 
+Thanks — it sounds like you're using the **`lambda.invoke()`** method (likely from AWS SDK v2) in **TypeScript**, and you're getting a **binary (Buffer)** response.
+
+Let’s walk through **how to properly invoke the Lambda function and decode the response**.
+
+---
+
+## ✅ 1. Setup for AWS SDK v2
+
+If you're using **AWS SDK v2**, install it if needed:
+
+```bash
+npm install aws-sdk
+```
+
+### 🔧 TypeScript Example using `lambda.invoke()`
+
+```ts
+import AWS from 'aws-sdk';
+
+// Initialize Lambda client
+const lambda = new AWS.Lambda({ region: 'your-region' });
+
+async function invokeLambda() {
+  const params = {
+    FunctionName: 'your-lambda-function-name',
+    Payload: JSON.stringify({ key: 'value' }), // Input to your Lambda
+  };
+
+  try {
+    const response = await lambda.invoke(params).promise();
+
+    if (response.Payload) {
+      const decodedPayload = Buffer.isBuffer(response.Payload)
+        ? response.Payload.toString('utf-8')
+        : response.Payload;
+
+      try {
+        const parsed = JSON.parse(decodedPayload as string);
+        console.log('Lambda response:', parsed);
+
+        // Optional: if Lambda returns a proxy response (like via API Gateway)
+        if (parsed.isBase64Encoded) {
+          const decodedBody = Buffer.from(parsed.body, 'base64').toString('utf-8');
+          console.log('Decoded body:', JSON.parse(decodedBody));
+        }
+
+      } catch (parseErr) {
+        console.log('Could not parse JSON:', decodedPayload);
+      }
+    } else {
+      console.log('No response payload.');
+    }
+
+  } catch (error) {
+    console.error('Invoke error:', error);
+  }
+}
+
+invokeLambda();
+```
+
+---
+
+## ⚠️ Binary Response? Here's Why
+
+* Lambda returns a `Buffer` by default in `response.Payload` — **even if it’s just JSON.**
+* If your Lambda returns `application/octet-stream` or sets `isBase64Encoded: true`, the body needs to be decoded.
+
+---
+
+## ✅ 2. Fix your Lambda Response (Optional)
+
+If you want to **avoid Base64/binary issues**, structure your Lambda like this (Node.js):
+
+```ts
+exports.handler = async (event) => {
+  return {
+    statusCode: 200,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: "Hello from Lambda" }),
+    isBase64Encoded: false,
+  };
+};
+```
+
+---
+
+Would you like to share:
+
+* The exact `response.Payload` you're getting?
+* Whether you're invoking a Lambda via **API Gateway proxy** or just directly?
+
+That will help me narrow down the fix more precisely.
+
+
