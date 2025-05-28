@@ -4293,4 +4293,23 @@ export async function callAnotherLambdaAndReturn() {
 Would you like help formatting the Lambda you're invoking, so it always returns UTF-8 JSON?
 
 
+import { S3Client, ListBucketsCommand } from "@aws-sdk/client-s3";
+
+const REGION = process.env.AWS_REGION || "ap-southeast-2";
+
+const s3Client = new S3Client({ region: REGION });
+
+async function listBuckets(): Promise<void> {
+  try {
+    const data = await s3Client.send(new ListBucketsCommand({}));
+    console.log("Buckets:", data.Buckets);
+  } catch (err) {
+    console.error("Error", err);
+  }
+}
+
+listBuckets();
+
+
+
 
