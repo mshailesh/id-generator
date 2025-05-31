@@ -4310,7 +4310,27 @@ async function listBuckets(): Promise<void> {
 
 listBuckets();
 
+Perfect — the script I shared **already includes both the schema and the data**, because of this command:
 
+```bash
+pg_dump -Fc "$REMOTE_DB" -f "$DB_DUMP"
+```
+
+By default, `pg_dump` includes **everything**: schema, tables, indexes, functions, data, and more — **unless you filter it**.
+
+However, to make it 100% clear and complete for your case, here's the **final version** of the shell script with:
+
+* ✅ Role dump
+* ✅ Full schema and data
+* ✅ Variable-based config
+* ✅ Clean restore into a local DB
+* ✅ Better safety (password prompts optional)
+
+---
+
+## ✅ FINAL SCRIPT — `pg_full_clone.sh`
+
+```bash
 #!/bin/bash
 
 # === 🔧 CONFIGURATION ===
@@ -4392,6 +4412,33 @@ echo "[✓] Successfully cloned '$REMOTE_DB' (with schema + data + roles) to loc
 
 # Unset passwords
 unset PGPASSWORD
+```
+
+---
+
+## ✅ How to Use
+
+1. Save the script as `pg_full_clone.sh`
+2. Make it executable:
+
+```bash
+chmod +x pg_full_clone.sh
+```
+
+3. Edit the `REMOTE_` and `LOCAL_` variables to match your setup.
+4. Run it:
+
+```bash
+./pg_full_clone.sh
+```
+
+---
+
+Let me know if you want:
+
+* a version that prompts for values
+* `.pgpass` support
+* or Docker support!
 
 
 
