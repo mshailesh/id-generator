@@ -4311,5 +4311,89 @@ async function listBuckets(): Promise<void> {
 listBuckets();
 
 
+#!/bin/bash
+
+# === 🔧 CONFIGURATION ===
+REMOTE_HOST="your.remote.host"
+REMOTE_PORT="5432"
+REMOTE_USER="remote_user"
+REMOTE_DB="remote_db"
+REMOTE_PASSWORD="remote_password"
+
+LOCAL_DB="local_db"
+LOCAL_USER="local_user"
+LOCAL_PASSWORD="local_password"
+
+DUMP_DIR="./pg_dump_temp"
+ROLES_DUMP="$DUMP_DIR/roles.sql"
+DB_DUMP="$DUMP_DIR/db.dump"
+
+# === 🚀 START ===
+echo "[*] Starting PostgreSQL full database clone..."
+
+# Ensure dump directory exists
+mkdir -p "$DUMP_DIR"
+
+# Step 0: Clean up previous files if needed
+rm -f "$ROLES_DUMP" "$DB_DUMP"
+
+# === 🔑 Set remote password
+export PGPASSWORD="$REMOTE_PASSWORD"
+
+# === 🧾 Step 1: Dump Roles (Users)
+echo "[*] Dumping roles (users) from remote..."
+pg_dumpall -h "$REMOTE_HOST" -p "$REMOTE_PORT" -U "$REMOTE_USER" --roles-only > "$ROLES_DUMP"
+if [ $? -ne 0 ]; then
+  echo "[✗] Failed to dump roles. Exiting."
+  exit 1
+fi
+
+# === 📦 Step 2: Dump Remote Database (Schema + Data)
+echo "[*] Dumping full remote database (schema + data)..."
+pg_dump -h "$REMOTE_HOST" -p "$REMOTE_PORT" -U "$REMOTE_USER" -d "$REMOTE_DB" -Fc -f "$DB_DUMP"
+if [ $? -ne 0 ]; then
+  echo "[✗] Failed to dump database. Exiting."
+  exit 1
+fi
+
+# === 🔑 Set local password
+export PGPASSWORD="$LOCAL_PASSWORD"
+
+# === 🔁 Step 3: Create Roles Locally
+echo "[*] Recreating roles on local..."
+psql -U "$LOCAL_USER" -f "$ROLES_DUMP"
+if [ $? -ne 0 ]; then
+  echo "[✗] Failed to create roles locally. Exiting."
+  exit 1
+fi
+
+# === 🆕 Step 4: Create Fresh Local DB
+echo "[*] Creating fresh local database: $LOCAL_DB"
+dropdb -U "$LOCAL_USER" "$LOCAL_DB" 2>/dev/null
+createdb -U "$LOCAL_USER" "$LOCAL_DB"
+if [ $? -ne 0 ]; then
+  echo "[✗] Failed to create local database. Exiting."
+  exit 1
+fi
+
+# === ♻️ Step 5: Restore Full Dump (Schema + Data)
+echo "[*] Restoring into local database..."
+pg_restore -U "$LOCAL_USER" -d "$LOCAL_DB" -Fc --clean --verbose "$DB_DUMP"
+if [ $? -ne 0 ]; then
+  echo "[✗] Restore failed. Check log."
+  exit 1
+fi
+
+# === ✅ DONE ===
+echo "[✓] Successfully cloned '$REMOTE_DB' (with schema + data + roles) to local DB '$LOCAL_DB'."
+
+# Optional: Cleanup
+# rm -rf "$DUMP_DIR"
+
+# Unset passwords
+unset PGPASSWORD
+
+
+
 
 
