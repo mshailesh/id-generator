@@ -4444,3 +4444,87 @@ Let me know if you want:
 
 
 
+Here's a complete example of using **AWS Powertools Logger** in TypeScript, ensuring logs are written to a file **only in the local environment** while maintaining structured logging:
+
+### **Step 1: Install Dependencies**
+If you haven't installed AWS Powertools for TypeScript, run:
+```sh
+npm install @aws-lambda-powertools/logger dotenv
+```
+
+### **Step 2: Create a `logger.ts` File**
+This file sets up the logger and ensures logs are written to a file **only when running locally**.
+
+```typescript
+import { Logger } from '@aws-lambda-powertools/logger';
+import fs from 'fs';
+import dotenv from 'dotenv';
+
+dotenv.config(); // Load environment variables from .env file
+
+const logger = new Logger({ serviceName: 'MyService' });
+const logFile = 'logs.txt';
+
+// Function to write logs to a file in local environment
+const writeLogToFile = (level: string, message: string, meta?: any) => {
+  if (process.env.NODE_ENV === 'local') { // Only log to file in local environment
+    const logEntry = JSON.stringify({ level, message, meta, timestamp: new Date().toISOString() });
+    fs.appendFileSync(logFile, logEntry + '\n');
+  }
+};
+
+// Override logger methods to also write logs to a file
+const originalInfo = logger.info.bind(logger);
+logger.info = (message: string, meta?: any) => {
+  writeLogToFile('INFO', message, meta);
+  originalInfo(message, meta);
+};
+
+const originalDebug = logger.debug.bind(logger);
+logger.debug = (message: string, meta?: any) => {
+  writeLogToFile('DEBUG', message, meta);
+  originalDebug(message, meta);
+};
+
+const originalError = logger.error.bind(logger);
+logger.error = (message: string, meta?: any) => {
+  writeLogToFile('ERROR', message, meta);
+  originalError(message, meta);
+};
+
+export default logger;
+```
+
+### **Step 3: Create a `.env` File**
+Define the environment variable for local execution:
+```
+NODE_ENV=local
+```
+
+### **Step 4: Use the Logger in Your Lambda Function**
+```typescript
+import logger from './logger';
+
+export const handler = async (event: any) => {
+  logger.info('Lambda function invoked', { event });
+
+  try {
+    logger.debug('Processing event', { event });
+
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ message: 'Success' }),
+    };
+  } catch (error) {
+    logger.error('Error occurred', { error });
+    throw error;
+  }
+};
+```
+
+### **How It Works**
+- Logs will be written to `logs.txt` **only when running locally** (`NODE_ENV=local`).
+- In AWS Lambda, logs will be sent to **CloudWatch** as usual.
+- The logger is reusable across different parts of your application.
+
+Would this setup work for you? 🚀 Let me know if you need any modifications!
