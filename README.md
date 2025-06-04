@@ -4528,3 +4528,126 @@ export const handler = async (event: any) => {
 - The logger is reusable across different parts of your application.
 
 Would this setup work for you? 🚀 Let me know if you need any modifications!
+
+
+
+Certainly! Here’s the **updated function** with **test cases** covering various scenarios.
+
+---
+
+### **Updated Function**
+```typescript
+function assignSequenceNumbersByGroup(instruments: Instrument[]): SequencedInstrument[] {
+  const groupedInstruments = new Map<string, Instrument[]>();
+
+  // Group by trade_sub_type, commodity_code, and instrument_type
+  for (const instrument of instruments) {
+    const groupKey = `${instrument.trade_sub_type}-${instrument.commodity_code}-${instrument.instrument_type}`;
+    if (!groupedInstruments.has(groupKey)) {
+      groupedInstruments.set(groupKey, []);
+    }
+    groupedInstruments.get(groupKey)!.push(instrument);
+  }
+
+  const result: SequencedInstrument[] = [];
+
+  // Process each group separately
+  for (const [groupKey, group] of groupedInstruments) {
+    group.sort((a, b) => a.expiry_date.localeCompare(b.expiry_date)); // Sort by expiry date
+
+    let sequenceNumber = 0;
+    const expiryDateMap = new Map<string, number>();
+
+    for (const instrument of group) {
+      if (!expiryDateMap.has(instrument.expiry_date)) {
+        sequenceNumber++;
+        expiryDateMap.set(instrument.expiry_date, sequenceNumber);
+      }
+      result.push({
+        ...instrument,
+        sequence_number: expiryDateMap.get(instrument.expiry_date)!,
+      });
+    }
+  }
+
+  return result;
+}
+```
+
+---
+
+### **Test Cases**
+```typescript
+function runTests() {
+  const testCases: { description: string; input: Instrument[]; expected: SequencedInstrument[] }[] = [
+    {
+      description: "Basic case with distinct expiry dates in each group",
+      input: [
+        { trade_sub_type: "A", commodity_code: "X", instrument_type: "T1", expiry_date: "2025-06-01" },
+        { trade_sub_type: "A", commodity_code: "X", instrument_type: "T1", expiry_date: "2025-06-02" },
+        { trade_sub_type: "B", commodity_code: "Y", instrument_type: "T2", expiry_date: "2025-07-01" },
+        { trade_sub_type: "B", commodity_code: "Y", instrument_type: "T2", expiry_date: "2025-07-02" }
+      ],
+      expected: [
+        { trade_sub_type: "A", commodity_code: "X", instrument_type: "T1", expiry_date: "2025-06-01", sequence_number: 1 },
+        { trade_sub_type: "A", commodity_code: "X", instrument_type: "T1", expiry_date: "2025-06-02", sequence_number: 2 },
+        { trade_sub_type: "B", commodity_code: "Y", instrument_type: "T2", expiry_date: "2025-07-01", sequence_number: 1 },
+        { trade_sub_type: "B", commodity_code: "Y", instrument_type: "T2", expiry_date: "2025-07-02", sequence_number: 2 }
+      ]
+    },
+    {
+      description: "Duplicate expiry dates within a group should reuse sequence number",
+      input: [
+        { trade_sub_type: "A", commodity_code: "X", instrument_type: "T1", expiry_date: "2025-06-01" },
+        { trade_sub_type: "A", commodity_code: "X", instrument_type: "T1", expiry_date: "2025-06-02" },
+        { trade_sub_type: "A", commodity_code: "X", instrument_type: "T1", expiry_date: "2025-06-01" } // Duplicate expiry
+      ],
+      expected: [
+        { trade_sub_type: "A", commodity_code: "X", instrument_type: "T1", expiry_date: "2025-06-01", sequence_number: 1 },
+        { trade_sub_type: "A", commodity_code: "X", instrument_type: "T1", expiry_date: "2025-06-02", sequence_number: 2 },
+        { trade_sub_type: "A", commodity_code: "X", instrument_type: "T1", expiry_date: "2025-06-01", sequence_number: 1 } // Reused
+      ]
+    },
+    {
+      description: "Multiple distinct groups each resetting sequence number",
+      input: [
+        { trade_sub_type: "C", commodity_code: "Z", instrument_type: "T3", expiry_date: "2025-08-01" },
+        { trade_sub_type: "C", commodity_code: "Z", instrument_type: "T3", expiry_date: "2025-08-02" },
+        { trade_sub_type: "D", commodity_code: "W", instrument_type: "T4", expiry_date: "2025-09-01" },
+        { trade_sub_type: "D", commodity_code: "W", instrument_type: "T4", expiry_date: "2025-09-02" }
+      ],
+      expected: [
+        { trade_sub_type: "C", commodity_code: "Z", instrument_type: "T3", expiry_date: "2025-08-01", sequence_number: 1 },
+        { trade_sub_type: "C", commodity_code: "Z", instrument_type: "T3", expiry_date: "2025-08-02", sequence_number: 2 },
+        { trade_sub_type: "D", commodity_code: "W", instrument_type: "T4", expiry_date: "2025-09-01", sequence_number: 1 },
+        { trade_sub_type: "D", commodity_code: "W", instrument_type: "T4", expiry_date: "2025-09-02", sequence_number: 2 }
+      ]
+    }
+  ];
+
+  for (const testCase of testCases) {
+    const actual = assignSequenceNumbersByGroup(testCase.input);
+    console.log(`Test Case: ${testCase.description}`);
+    console.log("Expected:", JSON.stringify(testCase.expected, null, 2));
+    console.log("Actual:", JSON.stringify(actual, null, 2));
+    console.log(actual.every((item, index) => JSON.stringify(item) === JSON.stringify(testCase.expected[index])) 
+      ? "✅ Passed" 
+      : "❌ Failed");
+    console.log("---");
+  }
+}
+
+// Run test cases
+runTests();
+```
+
+---
+
+### **Key Features of Tests**
+✅ **Handles groups correctly**—each group starts sequencing from `1`  
+✅ **Checks duplicate expiry dates reuse sequence numbers**  
+✅ **Ensures groups with distinct trade subtypes reset sequence**  
+✅ **Logs expected vs actual results**  
+
+This test suite should give a **clear pass/fail output** for each case. 🚀 Let me know if you'd like any refinements!
+
