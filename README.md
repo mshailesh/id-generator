@@ -4651,3 +4651,27 @@ runTests();
 
 This test suite should give a **clear pass/fail output** for each case. 🚀 Let me know if you'd like any refinements!
 
+
+#!/bin/bash
+
+export HOST="your-db.xxxxxx.rds.amazonaws.com"
+export REGION="ap-southeast-2"
+export USER="your-db-user"
+export DBNAME="your-db-name"
+
+# Generate token
+export PGPASSWORD=$(aws rds generate-db-auth-token \
+  --hostname $HOST \
+  --port 5432 \
+  --region $REGION \
+  --username $USER)
+
+# Connect
+psql \
+  --host=$HOST \
+  --port=5432 \
+  --username=$USER \
+  --dbname=$DBNAME \
+  --sslmode=require
+
+
