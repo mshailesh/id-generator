@@ -4675,3 +4675,82 @@ psql \
   --sslmode=require
 
 
+You can **post-process the engine result** using the facts provided to dynamically replace placeholders (`{{factName}}`) in event messages. Here's a structured approach:
+
+### **Step 1: Process Engine Events Using Facts**
+Modify the triggered events by injecting **fact values**.
+
+```typescript
+async function processEngineResult(engineResult, facts) {
+  return await Promise.all(
+    engineResult.events.map(event => {
+      if (!event.params?.message) return event;
+
+      return {
+        ...event,
+        params: {
+          ...event.params,
+          message: renderTemplate(event.params.message, facts) // Replace placeholders dynamically
+        }
+      };
+    })
+  );
+}
+```
+
+---
+
+### **Step 2: Replace Placeholders in Event Messages**
+Ensure fact-based replacement for **nested paths** like `"leg.symbol"`.
+
+```typescript
+function renderTemplate(template: string, data: Record<string, any>): string {
+  return template.replace(/\{\{([^}]+)\}\}/g, (match, path) => {
+    try {
+      // Support nested paths like 'user.profile.name'
+      const value = path.split('.').reduce((obj, key) => obj?.[key], data);
+      return value !== undefined ? value : match;
+    } catch {
+      return match;
+    }
+  });
+}
+```
+
+---
+
+### **Step 3: Integrate with Rule Engine Execution**
+Pass facts and process results dynamically.
+
+```typescript
+async function runRuleEngine(engine, facts) {
+  const engineResult = await engine.run();
+  const processedEvents = await processEngineResult(engineResult, facts);
+
+  processedEvents.forEach(event => console.log(event.params.message));
+}
+
+// Example facts
+const facts = {
+  instruments: [
+    { instrument_code: "AAPL" },
+    { instrument_code: "GOOGL" }
+  ],
+  leg: { symbol: "AAPL" }
+};
+
+// Execute rule engine
+const engine = new Engine(rules);
+runRuleEngine(engine, facts);
+```
+
+---
+
+### **How It Works**
+✅ **Retrieves all triggered events** from `json-rules-engine`.  
+✅ **Uses facts to inject real-time values** in event messages.  
+✅ **Supports deeply nested placeholders** (`{{leg.symbol}}`).  
+
+Would you like enhancements like **structured logging**, **handling missing values**, or **error reporting**? 🚀  
+
+
