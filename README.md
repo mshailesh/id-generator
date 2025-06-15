@@ -4772,3 +4772,223 @@ Would you like me to add:
 * 🧪 Unit test examples with Jest or Vitest?
 
 
+
+
+Perfect — let's make your **Chain of Responsibility for rule evaluation** support:
+
+1. ✅ **Success**
+2. ⚠️ **Warning**
+3. ❌ **Error (failure)**
+
+And still allow:
+
+* Continuing chain,
+* Skipping next,
+* Stopping chain immediately,
+* And capturing detailed **rule trace**.
+
+---
+
+## ✅ Finalized Design
+
+### 1. `RuleOutcomeType` – Semantic outcome of the rule
+
+```ts
+type RuleOutcomeType = "SUCCESS" | "WARNING" | "ERROR";
+```
+
+### 2. `RuleAction` – Control flow behavior
+
+```ts
+type RuleAction = "CONTINUE" | "SKIP" | "STOP";
+```
+
+---
+
+### 3. `RuleResult` – Result returned by each rule
+
+```ts
+interface RuleResult {
+  action: RuleAction;
+  outcome: RuleOutcomeType;
+  message?: string;
+  metadata?: Record<string, any>;
+}
+```
+
+---
+
+### 4. `RuleContext` – Passed to all rules and records status
+
+```ts
+interface RuleTraceEntry {
+  ruleName: string;
+  outcome: RuleOutcomeType;
+  action: RuleAction;
+  message?: string;
+  metadata?: Record<string, any>;
+  timestamp: string;
+}
+
+interface RuleContext {
+  input: any;
+  result?: any;
+  ruleTrace: RuleTraceEntry[];
+  [key: string]: any;
+}
+```
+
+---
+
+## 🧱 Base Rule Class
+
+```ts
+abstract class BaseRule {
+  private nextHandler: BaseRule | null = null;
+
+  public setNext(handler: BaseRule): BaseRule {
+    this.nextHandler = handler;
+    return handler;
+  }
+
+  protected getNext(): BaseRule | null {
+    return this.nextHandler;
+  }
+
+  public async execute(context: RuleContext): Promise<void> {
+    const result = await this.handle(context);
+
+    context.ruleTrace.push({
+      ruleName: this.constructor.name,
+      outcome: result.outcome,
+      action: result.action,
+      message: result.message,
+      metadata: result.metadata,
+      timestamp: new Date().toISOString(),
+    });
+
+    switch (result.action) {
+      case "STOP":
+        return;
+      case "SKIP":
+        return this.getNext()?.getNext()?.execute(context);
+      case "CONTINUE":
+        return this.getNext()?.execute(context);
+    }
+  }
+
+  abstract handle(context: RuleContext): Promise<RuleResult>;
+}
+```
+
+---
+
+## ✏️ Example Rules
+
+### 1. Error Rule
+
+```ts
+class FailsIfInactiveRule extends BaseRule {
+  async handle(context: RuleContext): Promise<RuleResult> {
+    const user = context.input.user;
+    if (!user?.isActive) {
+      return {
+        action: "STOP",
+        outcome: "ERROR",
+        message: "User is inactive.",
+      };
+    }
+
+    return {
+      action: "CONTINUE",
+      outcome: "SUCCESS",
+      message: "User is active.",
+    };
+  }
+}
+```
+
+### 2. Warning Rule
+
+```ts
+class WarnIfNotAdminRule extends BaseRule {
+  async handle(context: RuleContext): Promise<RuleResult> {
+    const user = context.input.user;
+    if (!user?.isAdmin) {
+      return {
+        action: "CONTINUE",
+        outcome: "WARNING",
+        message: "User is not admin. Proceeding with warning.",
+      };
+    }
+
+    return {
+      action: "CONTINUE",
+      outcome: "SUCCESS",
+      message: "User is admin.",
+    };
+  }
+}
+```
+
+---
+
+## 🚀 Chain Execution
+
+```ts
+const context: RuleContext = {
+  input: { user: { isActive: true, isAdmin: false } },
+  ruleTrace: [],
+};
+
+const rule1 = new FailsIfInactiveRule();
+const rule2 = new WarnIfNotAdminRule();
+const rule3 = new SetProcessingFlagRule();
+
+rule1.setNext(rule2).setNext(rule3);
+
+await rule1.execute(context);
+
+console.log("Trace of execution:", context.ruleTrace);
+```
+
+---
+
+## 🧠 Sample Output
+
+```json
+[
+  {
+    "ruleName": "FailsIfInactiveRule",
+    "outcome": "SUCCESS",
+    "action": "CONTINUE",
+    "message": "User is active.",
+    "timestamp": "2025-06-15T07:50:00.000Z"
+  },
+  {
+    "ruleName": "WarnIfNotAdminRule",
+    "outcome": "WARNING",
+    "action": "CONTINUE",
+    "message": "User is not admin. Proceeding with warning.",
+    "timestamp": "2025-06-15T07:50:01.000Z"
+  },
+  ...
+]
+```
+
+---
+
+## 🧰 Optional Enhancements
+
+* Support for **rule severity levels** (`info`, `warn`, `error`).
+* Dynamic **rule chain building** from config or JSON.
+* Generate a **summary** report:
+
+  ```ts
+  const errors = context.ruleTrace.filter(r => r.outcome === 'ERROR');
+  const warnings = context.ruleTrace.filter(r => r.outcome === 'WARNING');
+  ```
+
+---
+
+Would you like this exported as a reusable class library or starter template with DI support?
