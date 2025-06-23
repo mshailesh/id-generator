@@ -4992,3 +4992,32 @@ console.log("Trace of execution:", context.ruleTrace);
 ---
 
 Would you like this exported as a reusable class library or starter template with DI support?
+
+
+
+function resolveStatus(ruleContext: RuleContext): { status: 'success' | 'warning' | 'error'; statusCode: number } {
+  let hasError = false;
+  let hasStopError = false;
+  let hasWarning = false;
+
+  for (const entry of ruleContext.ruleTrace) {
+    if (entry.outcome === 'error') {
+      hasError = true;
+      if (entry.action === 'stop') {
+        hasStopError = true;
+      }
+    } else if (entry.outcome === 'warning') {
+      hasWarning = true;
+    }
+  }
+
+  if (hasStopError) {
+    return { status: 'error', statusCode: 400 };
+  } else if (hasError) {
+    return { status: 'error', statusCode: 202 };
+  } else if (hasWarning) {
+    return { status: 'warning', statusCode: 202 };
+  } else {
+    return { status: 'success', statusCode: 200 };
+  }
+}
