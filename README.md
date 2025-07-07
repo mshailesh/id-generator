@@ -5021,3 +5021,132 @@ function resolveStatus(ruleContext: RuleContext): { status: 'success' | 'warning
     return { status: 'success', statusCode: 200 };
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+Got it — you want to pass the **bucket name** (local folder name) and **file name** as separate inputs (just like in S3). Here's the updated version of the function and test cases that reflects this.
+
+---
+
+## ✅ 1. Updated Function — `fetchRulesFromFile.ts`
+
+```ts
+// src/utils/fetchRulesFromFile.ts
+import { promises as fs } from 'fs';
+import * as path from 'path';
+import logger from './logger'; // Use your actual logger
+
+/**
+ * Fetches JSON rules from a local file, treating `bucket` as folder and `key` as filename.
+ */
+export async function fetchRulesFromFile<T>(bucket: string, key: string): Promise<T> {
+  const filePath = path.resolve(bucket, key);
+  logger.debug('Fetching JSON rules from file', { bucket, key, filePath });
+
+  try {
+    const content = await fs.readFile(filePath, 'utf-8');
+    const rules = JSON.parse(content) as T;
+    logger.debug('Parsed rules from file', { rules });
+    return rules;
+  } catch (err) {
+    logger.error('Failed to read or parse JSON rules file', { filePath, error: err });
+    throw err;
+  }
+}
+```
+
+---
+
+## ✅ 2. Sample Rule File (unchanged)
+
+File: `__tests__/fixtures/sample-rules.json`
+
+```json
+[
+  {
+    "conditions": {
+      "all": [
+        {
+          "fact": "age",
+          "operator": "greaterThanInclusive",
+          "value": 18
+        }
+      ]
+    },
+    "event": {
+      "type": "adult-check",
+      "params": {
+        "message": "User is an adult"
+      }
+    }
+  }
+]
+```
+
+---
+
+## ✅ 3. Updated Test File — `fetchRulesFromFile.test.ts`
+
+```ts
+// __tests__/fetchRulesFromFile.test.ts
+import path from 'path';
+import { fetchRulesFromFile } from '../src/utils/fetchRulesFromFile';
+
+interface Rule {
+  conditions: unknown;
+  event: {
+    type: string;
+    params: Record<string, unknown>;
+  };
+}
+
+describe('fetchRulesFromFile (bucket + key input)', () => {
+  const bucket = path.join(__dirname, 'fixtures');
+  const validKey = 'sample-rules.json';
+  const invalidKey = 'non-existent.json';
+  const invalidJsonKey = 'invalid.json';
+
+  it('should load and parse rules from a valid JSON file', async () => {
+    const rules = await fetchRulesFromFile<Rule[]>(bucket, validKey);
+    expect(Array.isArray(rules)).toBe(true);
+    expect(rules[0].event.type).toBe('adult-check');
+  });
+
+  it('should throw an error if file does not exist', async () => {
+    await expect(fetchRulesFromFile<Rule[]>(bucket, invalidKey)).rejects.toThrow();
+  });
+
+  it('should throw a SyntaxError for invalid JSON', async () => {
+    await expect(fetchRulesFromFile<Rule[]>(bucket, invalidJsonKey)).rejects.toThrow(SyntaxError);
+  });
+});
+```
+
+---
+
+## ✅ 4. `invalid.json` (for test)
+
+File: `__tests__/fixtures/invalid.json`
+
+```
+{ "invalid": true
+```
+
+---
+
+Let me know if:
+
+* You want this function to also support loading from both local and S3 using a strategy
+* You’d like schema validation (e.g., using `zod` or `ajv`) to validate rule formats
+* You want a CLI utility to preview rules from a given path
+
