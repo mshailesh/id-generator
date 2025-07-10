@@ -5150,3 +5150,85 @@ Let me know if:
 * You’d like schema validation (e.g., using `zod` or `ajv`) to validate rule formats
 * You want a CLI utility to preview rules from a given path
 
+
+
+Certainly! Here's the TypeScript function to validate that the `agreedTradeDate` is **at most one business day before** the `tradeDate`, along with a comprehensive set of test cases:
+
+### ✅ TypeScript Function
+
+```typescript
+/**
+ * Validates that agreedTradeDate is at most one business day before tradeDate.
+ * 
+ * @param tradeDateStr - Trade date in "yyyy-MM-dd" format.
+ * @param agreedTradeDateStr - Agreed trade date in "yyyy-MM-dd" format.
+ * @param previousBusinessDateStr - Previous business day before tradeDate in "yyyy-MM-dd" format.
+ * @returns true if agreedTradeDate is the same as or within one calendar day before previous business day.
+ */
+function validateAgreedTradeDate(
+  tradeDateStr: string,
+  agreedTradeDateStr: string,
+  previousBusinessDateStr: string
+): boolean {
+  const agreed = new Date(agreedTradeDateStr);
+  const previousBiz = new Date(previousBusinessDateStr);
+
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const diffDays = (previousBiz.getTime() - agreed.getTime()) / msPerDay;
+
+  return diffDays >= 0 && diffDays <= 1;
+}
+```
+
+---
+
+### 🧪 Test Cases
+
+```typescript
+const tradeDate = "2025-07-14";
+const previousBiz = "2025-07-11"; // Calculated previous business day (Friday)
+
+/**
+ * Test cases to validate the function
+ */
+const testCases = [
+  { agreed: "2025-07-11", expected: true }, // Same day as previous business day
+  { agreed: "2025-07-10", expected: true }, // One day before previous business day
+  { agreed: "2025-07-09", expected: false }, // Two days before previous business day
+  { agreed: "2025-07-12", expected: false }, // Saturday (not a business day)
+  { agreed: "2025-07-13", expected: false }, // Sunday (not a business day)
+  { agreed: "2025-07-15", expected: false }, // After previous business day
+  { agreed: "2025-07-16", expected: false }, // After previous business day
+];
+
+testCases.forEach(({ agreed, expected }) => {
+  const result = validateAgreedTradeDate(tradeDate, agreed, previousBiz);
+  console.log(`Agreed: ${agreed}, Expected: ${expected}, Result: ${result}`);
+});
+```
+
+---
+
+### 📋 Expected Output
+
+```
+Agreed: 2025-07-11, Expected: true, Result: true
+Agreed: 2025-07-10, Expected: true, Result: true
+Agreed: 2025-07-09, Expected: false, Result: false
+Agreed: 2025-07-12, Expected: false, Result: false
+Agreed: 2025-07-13, Expected: false, Result: false
+Agreed: 2025-07-15, Expected: false, Result: false
+Agreed: 2025-07-16, Expected: false, Result: false
+```
+
+---
+
+### 🔍 Explanation
+
+* **Same Day**: If `agreedTradeDate` is the same as `previousBusinessDate`, it's valid.
+* **One Day Before**: If `agreedTradeDate` is exactly one calendar day before `previousBusinessDate`, it's valid.
+* **Invalid Cases**: If `agreedTradeDate` is more than one day before, on a weekend, or after `previousBusinessDate`, it's invalid.
+
+---
+
+If you need assistance integrating this into your project or handling public holidays, feel free to ask!
