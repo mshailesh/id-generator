@@ -5232,3 +5232,55 @@ Agreed: 2025-07-16, Expected: false, Result: false
 ---
 
 If you need assistance integrating this into your project or handling public holidays, feel free to ask!
+
+
+
+To delete records for a specific date before merging new ones, you can add a **pre-merge deletion step** in your `mergeInstruments` method. Here's how to do it cleanly:
+
+---
+
+### 🧼 Step 1: Add a `deleteBeforeMerge` method
+
+This deletes rows from the target table where a specific date column matches the given value:
+
+```ts
+async deleteBeforeMerge(
+  tableName: string,
+  dateColumn: string,
+  targetDate: string
+): Promise<void> {
+  const query = `DELETE FROM ${tableName} WHERE ${dateColumn} = $1::DATE`;
+  logger.info('Deleting existing records for date', { query, targetDate });
+
+  try {
+    await this.db.none(query, [targetDate]);
+  } catch (error) {
+    logger.error('Error deleting records before merge', { error });
+    throw error;
+  }
+}
+```
+
+---
+
+### 🔁 Step 2: Call it before your merge loop
+
+Update your `mergeInstruments` method like this:
+
+```ts
+await this.deleteBeforeMerge(tableName, 'your_date_column', '2024-07-16');
+```
+
+Make sure `'your_date_column'` matches the actual column name in your table that stores the date.
+
+---
+
+### 🧠 Why This Works
+
+- Ensures no duplicate or stale data for that date.
+- Keeps your merge logic clean and focused.
+- Avoids relying on `MERGE` to handle deletions, which can be tricky depending on PostgreSQL version.
+
+---
+
+Want me to help refactor this into a reusable utility or integrate it with a date-driven batch process? I can tailor it to your schema and workflow.
