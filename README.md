@@ -5284,3 +5284,55 @@ Make sure `'your_date_column'` matches the actual column name in your table that
 ---
 
 Want me to help refactor this into a reusable utility or integrate it with a date-driven batch process? I can tailor it to your schema and workflow.
+
+
+
+async mergeBulk(
+  tableName: string,
+  dataList: Record<string, any>[],
+  conflictColumns: string[],
+  specialFields: SpecialFields = {},
+  options: { timeout?: number } = {}
+): Promise<MergeResult> {
+  if (!dataList.length) {
+    return { successCount: 0, errorCount: 0, errorDetails: [] };
+  }
+
+  const processedDataList = dataList.map(data => {
+    const processedValues = this.processData(data, specialFields);
+    return Object.fromEntries(Object.keys(data).map((key, i) => [key, processedValues[i]]));
+  });
+
+  const columns = Object.keys(processedDataList[0]);
+  const cs = new this.pgp.helpers.ColumnSet(columns, { table: tableName });
+
+  const updateClause = cs.columns
+    .filter(col => !conflictColumns.includes(col.name))
+    .map(col => `${col.name} = EXCLUDED.${col.name}`)
+    .join(', ');
+
+  const query = this.pgp.helpers.insert(processedDataList, cs) + `
+    ON CONFLICT (${conflictColumns.join(', ')})
+    DO UPDATE SET ${updateClause}
+    RETURNING *`;
+
+  try {
+    const result = await this.db.any(query);
+    return {
+      successCount: result.length,
+      errorCount: dataList.length - result.length,
+      errorDetails: []
+    };
+  } catch (error) {
+    logger.error('Bulk merge failed', { error, tableName });
+    return {
+      successCount: 0,
+      errorCount: dataList.length,
+      errorDetails: dataList.map(data => ({
+        data,
+        error: (error as Error).message
+      }))
+    };
+  }
+}
+
