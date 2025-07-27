@@ -5285,54 +5285,96 @@ Make sure `'your_date_column'` matches the actual column name in your table that
 
 Want me to help refactor this into a reusable utility or integrate it with a date-driven batch process? I can tailor it to your schema and workflow.
 
+Here’s the revamped `mergeBulkAndDeactivate` TypeScript method that:
 
+* Performs a **bulk upsert** using `pg-promise`,
+* Then **marks existing rows inactive** that were *not* part of the latest batch for the same `trade_date`, all in a **single transaction** with minimal locking.
 
-async mergeBulk(
+```ts
+async mergeBulkAndDeactivate(
   tableName: string,
   dataList: Record<string, any>[],
   conflictColumns: string[],
+  tradeDateField: string,
   specialFields: SpecialFields = {},
   options: { timeout?: number } = {}
-): Promise<MergeResult> {
-  if (!dataList.length) {
+): Promise<{ successCount: number; errorCount: number; errorDetails: any[] }> {
+  if (dataList.length === 0) {
     return { successCount: 0, errorCount: 0, errorDetails: [] };
   }
 
-  const processedDataList = dataList.map(data => {
-    const processedValues = this.processData(data, specialFields);
-    return Object.fromEntries(Object.keys(data).map((key, i) => [key, processedValues[i]]));
+  // Step 1: Process input data
+  const processed = dataList.map(d => {
+    const values = this.processData(d, specialFields);
+    return Object.fromEntries(Object.keys(d).map((k,i) => [k, values[i]]));
   });
 
-  const columns = Object.keys(processedDataList[0]);
-  const cs = new this.pgp.helpers.ColumnSet(columns, { table: tableName });
+  const cs = new this.pgp.helpers.ColumnSet(Object.keys(processed[0]), { table: tableName });
 
-  const updateClause = cs.columns
-    .filter(col => !conflictColumns.includes(col.name))
-    .map(col => `${col.name} = EXCLUDED.${col.name}`)
+  // Build DO UPDATE clause
+  const skipUpdate = specialFields.skipUpdate ?? [];
+  const updateCols = cs.columns
+    .filter(c => !conflictColumns.includes(c.name) && !skipUpdate.includes(c.name))
+    .map(c => `${c.name} = EXCLUDED.${c.name}`)
     .join(', ');
 
-  const query = this.pgp.helpers.insert(processedDataList, cs) + `
-    ON CONFLICT (${conflictColumns.join(', ')})
-    DO UPDATE SET ${updateClause}
-    RETURNING *`;
+  const insertQuery = this.pgp.helpers.insert(processed, cs);
+  const conflictClause = ` ON CONFLICT (${conflictColumns.join(', ')}) DO UPDATE SET ${updateCols}`;
+  const returning = ' RETURNING ' + conflictColumns.join(', ');
+  const upsertSQL = insertQuery + conflictClause + returning;
 
-  try {
-    const result = await this.db.any(query);
+  return this.db.tx(async t => {
+    // Upsert rows and return conflict key columns of rows upserted
+    const upserted: any[] = await t.any(upsertSQL, undefined, options.timeout);
+
+    const processedKeys = upserted.map(r => conflictColumns.map(c => r[c]));
+    const tradeDate = processed[0][tradeDateField];
+
+    // Mark rows inactive for same trade_date not in processed batch
+    const deactSQL = `
+      UPDATE ${tableName}
+      SET active = FALSE
+      WHERE ${tradeDateField} = $1
+        AND (${conflictColumns.join(', ')})
+          NOT IN (
+            SELECT * FROM UNNEST($2::${conflictColumns.length.length > 1
+              ? `(${conflictColumns.map(() => 'text').join(',')})[]`
+              : 'text[]'})
+          );
+    `;
+
+    await t.none(deactSQL, [tradeDate, processedKeys], options.timeout);
+
     return {
-      successCount: result.length,
-      errorCount: dataList.length - result.length,
+      successCount: upserted.length,
+      errorCount: processed.length - upserted.length,
       errorDetails: []
     };
-  } catch (error) {
-    logger.error('Bulk merge failed', { error, tableName });
-    return {
-      successCount: 0,
-      errorCount: dataList.length,
-      errorDetails: dataList.map(data => ({
-        data,
-        error: (error as Error).message
-      }))
-    };
-  }
+  });
 }
+```
+
+### 🧠 Highlights
+
+* Uses `pg-promise` helpers for efficient **multi-row upsert** via `INSERT … ON CONFLICT … DO UPDATE` ([stackoverflow.com][1], [stackoverflow.com][2]).
+* Collects **conflict keys** from `RETURNING` clause to know which rows were affected.
+* Executes one **UPDATE statement** to deactivate records not in the batch, for the same `trade_date`. Inspired by the pattern discussed for logical deactivation when rows drop out between batches ([dba.stackexchange.com][3]).
+* All executed within a **single transaction** to maintain consistency.
+* Minimal locking: only touches involved rows for update/deactivation.
+
+---
+
+### ✅ Usage Notes
+
+* Ensure `active` column exists in your schema (BOOLEAN).
+* `tradeDateField` must exist and have the same value across all input rows.
+* For multi-column `conflictColumns`, the PostgreSQL `NOT IN (ROW(..), ..)` works natively.
+* Adjust cast types in `UNNEST` clause accordingly if conflict key columns are not text/varchar.
+* For performance, ensure there's an index on `(trade_date, ...)` and unique constraint on `conflictColumns`.
+
+Let me know if you’d like to add **conditional updates (e.g. skip if values unchanged)** or integrate with Spring/JDBC templates!
+
+[1]: https://stackoverflow.com/questions/37300997/multi-row-insert-with-pg-promise?utm_source=chatgpt.com "javascript - Multi-row insert with pg-promise - Stack Overflow"
+[2]: https://stackoverflow.com/questions/63327528/insert-on-conflict-do-update-using-pg-promise-helpers-for-multi-row-insert-updat?utm_source=chatgpt.com "INSERT ON CONFLICT DO UPDATE using pg-promise helpers for multi row ..."
+[3]: https://dba.stackexchange.com/questions/266846/can-i-update-old-data-and-insert-new-data-if-not-exists-currently-in-a-single-qu?utm_source=chatgpt.com "postgresql - Can I update old data and insert new data if not exists ..."
 
