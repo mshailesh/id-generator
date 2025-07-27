@@ -5234,61 +5234,12 @@ Agreed: 2025-07-16, Expected: false, Result: false
 If you need assistance integrating this into your project or handling public holidays, feel free to ask!
 
 
+Here’s a **complete, refactored `mergeBulkAndDeactivate` function** in TypeScript using `pg-promise`. It supports:
 
-To delete records for a specific date before merging new ones, you can add a **pre-merge deletion step** in your `mergeInstruments` method. Here's how to do it cleanly:
-
----
-
-### 🧼 Step 1: Add a `deleteBeforeMerge` method
-
-This deletes rows from the target table where a specific date column matches the given value:
-
-```ts
-async deleteBeforeMerge(
-  tableName: string,
-  dateColumn: string,
-  targetDate: string
-): Promise<void> {
-  const query = `DELETE FROM ${tableName} WHERE ${dateColumn} = $1::DATE`;
-  logger.info('Deleting existing records for date', { query, targetDate });
-
-  try {
-    await this.db.none(query, [targetDate]);
-  } catch (error) {
-    logger.error('Error deleting records before merge', { error });
-    throw error;
-  }
-}
-```
-
----
-
-### 🔁 Step 2: Call it before your merge loop
-
-Update your `mergeInstruments` method like this:
-
-```ts
-await this.deleteBeforeMerge(tableName, 'your_date_column', '2024-07-16');
-```
-
-Make sure `'your_date_column'` matches the actual column name in your table that stores the date.
-
----
-
-### 🧠 Why This Works
-
-- Ensures no duplicate or stale data for that date.
-- Keeps your merge logic clean and focused.
-- Avoids relying on `MERGE` to handle deletions, which can be tricky depending on PostgreSQL version.
-
----
-
-Want me to help refactor this into a reusable utility or integrate it with a date-driven batch process? I can tailor it to your schema and workflow.
-
-Here’s the revamped `mergeBulkAndDeactivate` TypeScript method that:
-
-* Performs a **bulk upsert** using `pg-promise`,
-* Then **marks existing rows inactive** that were *not* part of the latest batch for the same `trade_date`, all in a **single transaction** with minimal locking.
+* Bulk upsert (`INSERT … ON CONFLICT DO UPDATE`)
+* Marking existing rows as inactive when they aren’t present in the latest batch (based on composite key arrays and `trade_date`)
+* A single transaction for consistency and minimal locking
+* Correct handling for **multi-column composite keys** using PostgreSQL’s parallel `UNNEST` feature ([github.com][1], [dba.stackexchange.com][2], [stackoverflow.com][3])
 
 ```ts
 async mergeBulkAndDeactivate(
@@ -5303,47 +5254,56 @@ async mergeBulkAndDeactivate(
     return { successCount: 0, errorCount: 0, errorDetails: [] };
   }
 
-  // Step 1: Process input data
+  // Process data rows
   const processed = dataList.map(d => {
-    const values = this.processData(d, specialFields);
-    return Object.fromEntries(Object.keys(d).map((k,i) => [k, values[i]]));
+    const vals = this.processData(d, specialFields);
+    return Object.fromEntries(Object.keys(d).map((k,i) => [k, vals[i]]));
   });
 
-  const cs = new this.pgp.helpers.ColumnSet(Object.keys(processed[0]), { table: tableName });
+  const cs = new this.pgp.helpers.ColumnSet(Object.keys(processed[0]), {
+    table: tableName
+  });
 
-  // Build DO UPDATE clause
   const skipUpdate = specialFields.skipUpdate ?? [];
   const updateCols = cs.columns
     .filter(c => !conflictColumns.includes(c.name) && !skipUpdate.includes(c.name))
-    .map(c => `${c.name} = EXCLUDED.${c.name}`)
+    .map(c => `${c.name}=EXCLUDED.${c.name}`)
     .join(', ');
 
   const insertQuery = this.pgp.helpers.insert(processed, cs);
-  const conflictClause = ` ON CONFLICT (${conflictColumns.join(', ')}) DO UPDATE SET ${updateCols}`;
-  const returning = ' RETURNING ' + conflictColumns.join(', ');
+  const conflictClause = ` ON CONFLICT (${conflictColumns.join(
+    ', '
+  )}) DO UPDATE SET ${updateCols}`;
+  const returning = ` RETURNING ${conflictColumns.join(', ')}`
   const upsertSQL = insertQuery + conflictClause + returning;
 
   return this.db.tx(async t => {
-    // Upsert rows and return conflict key columns of rows upserted
-    const upserted: any[] = await t.any(upsertSQL, undefined, options.timeout);
-
-    const processedKeys = upserted.map(r => conflictColumns.map(c => r[c]));
+    const upserted = await t.any(upsertSQL, undefined, options.timeout);
+    const processedKeys = upserted.map(row =>
+      conflictColumns.map(col => String(row[col]))
+    );
     const tradeDate = processed[0][tradeDateField];
 
-    // Mark rows inactive for same trade_date not in processed batch
+    // Prepare key arrays for UNNEST
+    const keyArrays = conflictColumns.map((_, idx) =>
+      processedKeys.map(k => k[idx])
+    );
+    const placeholders = keyArrays
+      .map((_, idx) => `$${2 + idx}::text[]`)
+      .join(', ');
+
     const deactSQL = `
       UPDATE ${tableName}
       SET active = FALSE
       WHERE ${tradeDateField} = $1
         AND (${conflictColumns.join(', ')})
           NOT IN (
-            SELECT * FROM UNNEST($2::${conflictColumns.length.length > 1
-              ? `(${conflictColumns.map(() => 'text').join(',')})[]`
-              : 'text[]'})
+            SELECT ${conflictColumns.join(', ')}
+            FROM UNNEST(${placeholders}) AS t(${conflictColumns.join(', ')})
           );
     `;
 
-    await t.none(deactSQL, [tradeDate, processedKeys], options.timeout);
+    await t.none(deactSQL, [tradeDate, ...keyArrays], options.timeout);
 
     return {
       successCount: upserted.length,
@@ -5354,27 +5314,31 @@ async mergeBulkAndDeactivate(
 }
 ```
 
-### 🧠 Highlights
+---
 
-* Uses `pg-promise` helpers for efficient **multi-row upsert** via `INSERT … ON CONFLICT … DO UPDATE` ([stackoverflow.com][1], [stackoverflow.com][2]).
-* Collects **conflict keys** from `RETURNING` clause to know which rows were affected.
-* Executes one **UPDATE statement** to deactivate records not in the batch, for the same `trade_date`. Inspired by the pattern discussed for logical deactivation when rows drop out between batches ([dba.stackexchange.com][3]).
-* All executed within a **single transaction** to maintain consistency.
-* Minimal locking: only touches involved rows for update/deactivation.
+### 🧠 Key Features & Why It Works:
+
+* **Parallel UNNEST**: Uses PostgreSQL’s `FROM UNNEST(a1::text[], a2::text[]) AS t(col1,col2)` to create composite key rows. This cleanly supports multi-column comparisons and avoids unwanted cartesian joins ([dba.stackexchange.com][2]).
+* **Accurate deactivation**: Only rows matching the same `trade_date` and not found in the latest batch are marked `active = FALSE`.
+* **Minimal code and strong performance**: Uses `pg-promise` column helper and simplified SQL queries for both upsert and deactivate steps ([stackoverflow.com][4], [github.com][5]).
+* **Transactional safety**: Wraps upsert and deactivation within a single transaction to ensure atomicity.
 
 ---
 
-### ✅ Usage Notes
+### ✅ Setup Reminders:
 
-* Ensure `active` column exists in your schema (BOOLEAN).
-* `tradeDateField` must exist and have the same value across all input rows.
-* For multi-column `conflictColumns`, the PostgreSQL `NOT IN (ROW(..), ..)` works natively.
-* Adjust cast types in `UNNEST` clause accordingly if conflict key columns are not text/varchar.
-* For performance, ensure there's an index on `(trade_date, ...)` and unique constraint on `conflictColumns`.
+* Ensure the table has an `active BOOLEAN` column and a column named by `tradeDateField`.
+* Correct indexes and unique constraints should exist on `conflictColumns` (or composite unique index), plus `(trade_date, …)` for quick deactivation queries.
+* For single-column `conflictColumns`, this UNNEST logic still works, but you can simplify to `NOT IN ($2::text[])`.
 
-Let me know if you’d like to add **conditional updates (e.g. skip if values unchanged)** or integrate with Spring/JDBC templates!
+Would you like additions such as:
 
-[1]: https://stackoverflow.com/questions/37300997/multi-row-insert-with-pg-promise?utm_source=chatgpt.com "javascript - Multi-row insert with pg-promise - Stack Overflow"
-[2]: https://stackoverflow.com/questions/63327528/insert-on-conflict-do-update-using-pg-promise-helpers-for-multi-row-insert-updat?utm_source=chatgpt.com "INSERT ON CONFLICT DO UPDATE using pg-promise helpers for multi row ..."
-[3]: https://dba.stackexchange.com/questions/266846/can-i-update-old-data-and-insert-new-data-if-not-exists-currently-in-a-single-qu?utm_source=chatgpt.com "postgresql - Can I update old data and insert new data if not exists ..."
+* Idempotent update filtering (skip when values haven’t changed),
+* Integration of multi-type conflict columns (e.g. numbers, dates),
+* Enhanced error-level tracking per row? Let me know and I’ll help customize further!
 
+[1]: https://github.com/vitaly-t/pg-promise/issues/542?utm_source=chatgpt.com "Support ON CONFLICT clause for bulk inserts · Issue #542 · vitaly-t/pg ..."
+[2]: https://dba.stackexchange.com/questions/63270/unnest-multiple-arrays-into-rows?utm_source=chatgpt.com "postgresql - Unnest multiple arrays into rows - Database Administrators ..."
+[3]: https://stackoverflow.com/questions/76905241/how-to-unnest-two-or-more-postgres-arrays-from-a-cte?utm_source=chatgpt.com "How to unnest two or more postgres arrays from a CTE"
+[4]: https://stackoverflow.com/questions/37208693/pg-promise-performance-boost-on-conflict?utm_source=chatgpt.com "Pg-promise performance boost : ON CONFLICT - Stack Overflow"
+[5]: https://github.com/vitaly-t/pg-promise/wiki/Learn-by-Example?utm_source=chatgpt.com "Learn by Example · vitaly-t/pg-promise Wiki · GitHub"
