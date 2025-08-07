@@ -5439,3 +5439,85 @@ describe('enrichIncomingLegs (Jest)', () => {
 ---
 
 Want to add error simulation (e.g. DB failure) or test fallback strategies next? I can help you extend this suite.
+
+
+To compare two objects for equality in TypeScript (or JavaScript), you have a few options depending on how deep and strict you want the comparison to be.
+
+---
+
+## ✅ 1. Shallow Equality
+
+Compares top-level keys and values only.
+
+```ts
+function shallowEqual(obj1: Record<string, any>, obj2: Record<string, any>): boolean {
+  const keys1 = Object.keys(obj1);
+  const keys2 = Object.keys(obj2);
+
+  if (keys1.length !== keys2.length) return false;
+
+  return keys1.every(key => obj2.hasOwnProperty(key) && obj1[key] === obj2[key]);
+}
+```
+
+### 🧪 Example
+
+```ts
+shallowEqual({ a: 1, b: 2 }, { a: 1, b: 2 }); // true
+shallowEqual({ a: 1 }, { a: 1, b: 2 });       // false
+```
+
+---
+
+## ✅ 2. Deep Equality (Recursive)
+
+Handles nested objects and arrays.
+
+```ts
+function deepEqual(a: any, b: any): boolean {
+  if (a === b) return true;
+
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) {
+    return false;
+  }
+
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+
+  if (keysA.length !== keysB.length) return false;
+
+  return keysA.every(key => deepEqual(a[key], b[key]));
+}
+```
+
+### 🧪 Example
+
+```ts
+deepEqual({ a: { x: 1 } }, { a: { x: 1 } }); // true
+deepEqual({ a: [1, 2] }, { a: [1, 2] });     // true
+deepEqual({ a: 1 }, { a: '1' });             // false
+```
+
+---
+
+## ✅ 3. Using `lodash` (if available)
+
+```ts
+import isEqual from 'lodash/isEqual';
+
+isEqual(obj1, obj2); // deep comparison
+```
+
+---
+
+## 🧠 Tip for Strategy Matching
+
+If you're comparing enriched legs to originals:
+
+```ts
+if (!deepEqual(enrichedLeg, incomingLeg)) {
+  console.log('Leg was enriched');
+}
+```
+
+Want to add a diffing function that shows which fields changed? I can help you build that too.
