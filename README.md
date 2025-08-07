@@ -5342,3 +5342,100 @@ Would you like additions such as:
 [3]: https://stackoverflow.com/questions/76905241/how-to-unnest-two-or-more-postgres-arrays-from-a-cte?utm_source=chatgpt.com "How to unnest two or more postgres arrays from a CTE"
 [4]: https://stackoverflow.com/questions/37208693/pg-promise-performance-boost-on-conflict?utm_source=chatgpt.com "Pg-promise performance boost : ON CONFLICT - Stack Overflow"
 [5]: https://github.com/vitaly-t/pg-promise/wiki/Learn-by-Example?utm_source=chatgpt.com "Learn by Example · vitaly-t/pg-promise Wiki · GitHub"
+
+
+
+Perfect — if you're using **Jest** instead of Vitest, the mocking setup is slightly different but just as powerful. Here's how to mock your `DataService` class and test the `enrichIncomingLegs` driver method using Jest.
+
+---
+
+## 🧩 Setup Recap
+
+### 📄 `DataService.ts`
+
+```ts
+export class DataService {
+  async fetchDbLegs(legIds: string[]): Promise<any[]> {
+    // Real DB query logic
+  }
+}
+```
+
+### 📄 `enrichLegsDriver.ts`
+
+```ts
+import { enrichLegs } from './enrichLegs';
+import { DataService } from './DataService';
+
+const dataService = new DataService();
+
+export async function enrichIncomingLegs(incomingLegs: any[]): Promise<any[]> {
+  const legIds = incomingLegs.map(l => l.legId).filter(Boolean);
+  if (legIds.length === 0) return incomingLegs;
+
+  const dbLegs = await dataService.fetchDbLegs(legIds);
+  return enrichLegs(incomingLegs, dbLegs);
+}
+```
+
+---
+
+## 🧪 Jest Test: `enrichLegsDriver.test.ts`
+
+```ts
+import { enrichIncomingLegs } from './enrichLegsDriver';
+import { DataService } from './DataService';
+
+jest.mock('./DataService');
+
+const mockFetchDbLegs = jest.fn();
+(DataService as jest.Mock).mockImplementation(() => ({
+  fetchDbLegs: mockFetchDbLegs,
+}));
+
+describe('enrichIncomingLegs (Jest)', () => {
+  beforeEach(() => {
+    mockFetchDbLegs.mockReset();
+  });
+
+  it('should enrich legs using mocked dbLegs', async () => {
+    const incoming = [
+      { legId: 'L1', legNo: 1 },
+      { legId: 'L2', symbol: 'ABC' },
+    ];
+
+    mockFetchDbLegs.mockResolvedValue([
+      { legId: 'L1', symbol: 'DB1', quantity: 100 },
+      { legId: 'L2', symbol: 'DB2', quantity: 200 },
+    ]);
+
+    const result = await enrichIncomingLegs(incoming);
+
+    expect(result).toEqual([
+      { legId: 'L1', legNo: 1, symbol: 'DB1', quantity: 100 },
+      { legId: 'L2', symbol: 'DB2', quantity: 200 },
+    ]);
+    expect(mockFetchDbLegs).toHaveBeenCalledWith(['L1', 'L2']);
+  });
+
+  it('should skip DB call if no legIds are present', async () => {
+    const incoming = [{ symbol: 'NO_ID' }];
+    const result = await enrichIncomingLegs(incoming);
+
+    expect(result).toEqual([{ symbol: 'NO_ID' }]);
+    expect(mockFetchDbLegs).not.toHaveBeenCalled();
+  });
+});
+```
+
+---
+
+## 🧠 Key Jest Concepts
+
+- `jest.mock('./DataService')` replaces the module
+- `jest.fn()` lets you control behavior and inspect calls
+- `mockImplementation()` defines how the class behaves when instantiated
+
+---
+
+Want to add error simulation (e.g. DB failure) or test fallback strategies next? I can help you extend this suite.
